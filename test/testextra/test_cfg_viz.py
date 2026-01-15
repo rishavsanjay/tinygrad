@@ -70,7 +70,7 @@ def asm_kernel(out:UOp, insts:list[str|Inst], name:str, device:str, compiler:Com
   sink = UOp.sink(out, lidx, gidx, arg=KernelInfo(name=name))
   src, lib = assemble(name, insts, compiler)
   return UOp(Ops.PROGRAM, src=(sink, UOp(Ops.DEVICE, arg=device), UOp(Ops.LINEAR, src=(*sink.src, sink)),
-                               UOp(Ops.SOURCE, arg=src), UOp(Ops.BINARY, arg=lib)), arg=())
+                               UOp(Ops.SOURCE, arg=src), UOp(Ops.BINARY, arg=lib)))
 
 def run_asm(name:str, insts:list) -> None:
   fxn = functools.partial(asm_kernel, insts=insts, name=name, device=Device.DEFAULT, compiler=Device[Device.DEFAULT].compiler)
@@ -214,6 +214,19 @@ class TestCfg(unittest.TestCase):
       ]
     asm += ["end:", s_endpgm()]
     run_asm("test_colored_blocks", asm)
+
+  def test_jump_back_to_end(self):
+    run_asm("jump_back_to_end", [
+      "entry:",
+        s_mov_b32(s[1], 2),
+        "s_cbranch_execz loop",
+      "end:",
+        s_endpgm(),
+      "loop:",
+        s_add_u32(s[1], s[1], -1),
+        s_cmp_eq_i32(s[1], 0),
+        "s_branch end",
+    ])
 
 if __name__ == "__main__":
   unittest.main()
