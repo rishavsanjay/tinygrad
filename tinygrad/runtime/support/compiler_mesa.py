@@ -7,7 +7,14 @@ from tinygrad.runtime.support.compiler_llvm import CPULLVMCompiler, expect, cerr
 # NB: compilers assume mesa's glsl type cache is managed externally with mesa.glsl_type_singleton_init_or_ref() and mesa.glsl_type_singleton_decref()
 
 def rzalloc(typ, ctx=None, **kwargs):
-  s = ctypes.cast(mesa.rzalloc_size(ctypes.cast(ctx, ctypes.c_void_p), ctypes.sizeof(typ)), ctypes.POINTER(typ))
+  # Mesa 26.2 grew ir3_shader / ir3_shader_variant / ir3_const_state; the autogen
+  # sizeof may be stale, causing underallocation. Pad to known Mesa 26.2 sizes.
+  sz = ctypes.sizeof(typ)
+  if getattr(mesa, "is_mesa_26", False):
+    if typ is mesa.struct_ir3_shader: sz = 1240
+    elif typ is mesa.struct_ir3_shader_variant: sz = 2128
+    elif typ is mesa.struct_ir3_const_state: sz = 1440
+  s = ctypes.cast(mesa.rzalloc_size(ctypes.cast(ctx, ctypes.c_void_p), sz), ctypes.POINTER(typ))
   for k,v in kwargs.items(): setattr(s.contents, k, v)
   return s
 
@@ -95,15 +102,36 @@ def disas_adreno(lib:bytes, gpu_id=630):
 
 class IR3Compiler(Compiler):
   def __init__(self, arch):
-    assert arch.split(',')[0] == "a630", "only a630 supported, for now"
-    self.arch, self.dev_id = arch, mesa.struct_fd_dev_id(630, 0x6030001)
-    self.cc = mesa.ir3_compiler_create(None, self.dev_id, mesa.fd_dev_info(self.dev_id),
+    # Parse arch: "a<gpu_id>[,chip_id=0x...]" — chip_id is required for A740+
+    arch_head = arch.split(',')[0]
+    assert arch_head.startswith("a") and arch_head[1:].isdigit(), f"bad arch head: {arch_head!r}"
+    gpu_id_small = int(arch_head[1:])
+    chip_id = 0
+    for part in arch.split(',')[1:]:
+      if part.startswith("chip_id="):
+        chip_id = int(part[len("chip_id="):], 0)
+        break
+    if chip_id == 0:
+      chip_id = {630: 0x06030001, 730: 0x07030001}.get(gpu_id_small, 0)
+    assert chip_id != 0, f"arch {arch!r} requires an explicit chip_id"
+    self.arch, self.dev_id = arch, mesa.struct_fd_dev_id(gpu_id_small, chip_id)
+    # fd_dev_info_raw returns a pointer — avoids by-value copy, works on 25.2 + 26.2
+    dev_info = mesa.fd_dev_info_raw(self.dev_id)
+    if not dev_info or dev_info.contents.chip == 0:
+      raise RuntimeError(
+        f"Adreno chip_id={chip_id:#x} is not recognized by the bundled libmesa. "
+        f"Upgrade tinymesa to include the device-table entry for chip_id={chip_id:#x}.")
+    self.cc = mesa.ir3_compiler_create(None, self.dev_id, dev_info,
                                        mesa.struct_ir3_compiler_options(disable_cache=True)).contents
     self.cc.has_preamble = False
-    self.nir_options = bytes(mesa.ir3_get_compiler_options(self.cc).contents)
+    # Store options as raw C pointer — Mesa 26.2's nir_shader_compiler_options
+    # is larger than 248 bytes; from_buffer_copy would truncate it.
+    self.options_ptr = mesa.ir3_get_compiler_options(self.cc)
+    self.nir_options = bytes(self.options_ptr.contents)
     super().__init__(f"compile_ir3_{arch}")
 
-  def __del__(self): mesa.ir3_compiler_destroy(self.cc)
+  def __del__(self):
+    if hasattr(self, 'cc'): mesa.ir3_compiler_destroy(self.cc)
 
   def __reduce__(self): return IR3Compiler, (self.arch,)
 
@@ -114,10 +142,15 @@ class IR3Compiler(Compiler):
     mesa.ir3_finalize_nir(self.cc, mesa.struct_ir3_shader_nir_options(), nir_shader)
     shader = rzalloc(mesa.struct_ir3_shader, compiler=ctypes.pointer(self.cc), type=mesa.MESA_SHADER_COMPUTE, nir=nir_shader).contents
     mesa.ir3_nir_post_finalize(shader)
-    v = rzalloc(mesa.struct_ir3_shader_variant, type=shader.type, compiler=ctypes.pointer(self.cc), key=mesa.struct_ir3_shader_key()).contents
+    # Assign shader=ctypes.pointer(shader) so C-side functions that dereference
+    # v->shader->nir (like ir3_ra_get_reg_file_limits) have a valid parent pointer.
+    v = rzalloc(mesa.struct_ir3_shader_variant, shader=ctypes.pointer(shader), type=shader.type, compiler=ctypes.pointer(self.cc), key=mesa.struct_ir3_shader_key()).contents
     v.const_state, shader.variants, shader.variant_count = rzalloc(mesa.struct_ir3_const_state, ctypes.pointer(v)), ctypes.pointer(v), 1
     v.num_uavs = (info:=nir_shader.contents.info).num_ssbos + info.num_images
     assert not mesa.ir3_compile_shader_nir(self.cc, shader, v), "compilation failed"
+    # Re-wrap v via from_address to bypass ctypes caching stale values after
+    # ir3_compile_shader_nir mutates v in-place.
+    v = mesa.struct_ir3_shader_variant.from_address(ctypes.addressof(v))
     lib = ctypes.cast(mesa.ir3_shader_assemble(v), ctypes.POINTER(ctypes.c_uint32))
     # NB: bytes(v) means the pointers in v are no longer safe! a custom __reduce__ that supports pointers for c.Struct would make this simpler
     ret = bytes(v) + bytes(v.const_state.contents) + ctypes.string_at(v.imm_state.values, v.imm_state.count * 4) + ctypes.string_at(lib, v.info.size)

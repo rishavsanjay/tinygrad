@@ -392,7 +392,7 @@ class HCQCompiled(Compiled, Generic[SignalType]):
   def __init__(self, device:str, allocator:HCQAllocatorBase, compilers:list[type[Renderer]], runtime, signal_t:Type[SignalType]|None=None,
                comp_queue_t:Callable[..., HWQueue]|None=None, copy_queue_t:Callable[..., HWQueue]|None=None, kernargs_size=(16 << 20),
                sigalloc_size=0x1000, can_recover:bool=False, arch=None):
-    self.device_id:int = int(device.split(":")[1]) if ":" in device else 0
+    self.device_id:int = int(device.split(":")[1]) if ":" in device and device.split(":")[1].isdigit() else 0
 
     from tinygrad.runtime.graph.hcq import HCQGraph
     super().__init__(device, allocator, compilers, runtime, HCQGraph, arch=arch)

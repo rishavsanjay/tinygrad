@@ -9,7 +9,21 @@ from tinygrad.runtime.support.c import POINTER
 import base64, ctypes, struct, functools, inspect, itertools
 
 def g(s:str): return getattr(mesa, s)
-def nsrc(d:mesa.nir_def) -> mesa.nir_src: return mesa.nir_src(ssa=ctypes.pointer(d))
+
+# NIR pointer-lifecycle safety: Mesa functions (nir_build_alu*, nir_def_init,
+# nir_builder_instr_insert) STORE received pointers. Passing ctypes VALUES from
+# .contents creates temporary stack copies whose addresses dangle after return.
+# Fix: all NIR object creators return POINTERS (LP_T), never .contents values.
+def nsrc(d) -> mesa.nir_src: return mesa.nir_src(ssa=d)
+
+def _def_ptr(instr) -> ctypes.POINTER:
+  """Extract POINTER(nir_def) from POINTER(nir_<type>_instr) via the _def field offset."""
+  return ctypes.cast(ctypes.cast(instr, ctypes.c_void_p).value + type(instr.contents)._def.offset,
+                     ctypes.POINTER(mesa.struct_nir_def))
+
+def _instr_ptr(instr) -> ctypes.POINTER:
+  """Cast POINTER(nir_<type>_instr) to POINTER(nir_instr). Safe: nir_instr is at offset 0."""
+  return ctypes.cast(instr, ctypes.POINTER(mesa.struct_nir_instr))
 
 def glsl_type(t:DType): return {
   **{getattr(dtypes,k):g(f"glsl_type_builtin_{v}") for k,v in [('double','double'),('float','float'),('float16','float16_t'),('bool','uint8_t')]},
@@ -35,59 +49,82 @@ def nif(b:mesa.nir_builder, cond:mesa.nir_def, then_fn:Callable, else_fn:Callabl
   mesa.nir_pop_if(b, nif)
   return t, e
 
-def nalu(b:mesa.nir_builder, op:str, *srcs:mesa.nir_def) -> mesa.nir_def: return g(f"nir_build_alu{len(srcs)}")(b, g(f"nir_op_{op}"), *srcs).contents
+def nalu(b, op:str, *srcs):
+  return g(f"nir_build_alu{len(srcs)}")(b, g(f"nir_op_{op}"), *srcs)
 
 def nir_instr(nc=1, bs=lambda: None, intrins=None, srcs=None, has_def=True, df=None, also=lambda: None, **contents):
   def dec(f:Callable):
     @functools.wraps(f)
-    def wrapper(*args, **kwargs) -> mesa.nir_def:
+    def wrapper(*args, **kwargs):
       (ba:=inspect.signature(f).bind(*args, **kwargs)).apply_defaults()
       def go(g): return g(**{nm: ba.arguments[nm] for nm in inspect.signature(g).parameters}) if callable(g) else g
 
       instr = f(*args, **kwargs)
-      if has_def: mesa.nir_def_init(instr.contents.instr, instr.contents._def, go(nc), go(bs))
+      if has_def:
+        dptr = _def_ptr(instr)
+        mesa.nir_def_init(_instr_ptr(instr), dptr, go(nc), go(bs))
+      _instr_addr = ctypes.cast(instr, ctypes.c_void_p).value
       for k, v in go(intrins or {}).items():
-        idx = mesa.nir_intrinsic_infos[instr.contents.intrinsic].index_map[g(f"NIR_INTRINSIC_{k}")]
-        assert idx > 0, "invalid intrinsic. mesa version mismatch?"
-        instr.contents.const_index[idx - 1] = go(v)
-      for i, src in enumerate(go(srcs or [])): ctypes.cast(instr.contents.src, ctypes.POINTER(mesa.nir_src))[i] = go(src)
-      for k,v in {k:vcomp for k,v in contents.items() if (vcomp:=go(v)) is not None}.items(): setattr(instr.contents, k, go(v))
-      mesa.nir_builder_instr_insert(ba.arguments['b'], instr.contents.instr)
+        idx = mesa.nir_intrinsic_infos[ctypes.c_uint32.from_address(_instr_addr + mesa.struct_nir_intrinsic_instr.intrinsic.offset).value].index_map[g(f"NIR_INTRINSIC_{k}")]
+        assert idx > 0, f"invalid intrinsic key {k!r} for mesa version (idx={idx})"
+        ctypes.c_int32.from_address(_instr_addr + mesa.struct_nir_intrinsic_instr.const_index.offset + (idx - 1) * 4).value = go(v)
+      for i, src in enumerate(go(srcs or [])):
+        src_addr = _instr_addr + mesa.struct_nir_intrinsic_instr.src.offset + i * ctypes.sizeof(mesa.nir_src)
+        src_val = go(src)
+        ctypes.memmove(src_addr, ctypes.addressof(src_val), ctypes.sizeof(mesa.nir_src))
+      # Write non-intrinsic struct fields directly to live memory (bypass ctypes caching)
+      # Use setattr on a fresh instance bound to the live address to get correct type handling
+      live = type(instr.contents).from_address(_instr_addr)
+      for k, vcomp in {k: go(v) for k, v in contents.items() if go(v) is not None}.items():
+        if isinstance(vcomp, ctypes._Pointer): ctypes.c_void_p.from_address(_instr_addr + getattr(type(instr.contents), k).offset).value = ctypes.cast(vcomp, ctypes.c_void_p).value
+        elif isinstance(vcomp, ctypes.Structure): ctypes.memmove(_instr_addr + getattr(type(instr.contents), k).offset, ctypes.addressof(vcomp), ctypes.sizeof(vcomp))
+        else: setattr(live, k, vcomp)
+      mesa.nir_builder_instr_insert(ba.arguments['b'], _instr_ptr(instr))
       go(also)
-      return instr.contents._def if has_def else (mesa.nir_def() if df is None else go(df))
+      return dptr if has_def else (mesa.nir_def() if df is None else go(df))
     return wrapper
   return dec
 
-@nir_instr(nc=1, bs=lambda src: src.bit_size, exact=lambda b:b.exact, fp_fast_math=lambda b:b.fp_fast_math)
-def nchannel(b:mesa.nir_builder, src:mesa.nir_def, c:int):
+@nir_instr(nc=1, bs=lambda src: src.contents.bit_size)
+def nchannel(b, src, c:int):
   alu_src = mesa.nir_alu_src(src=nsrc(src))
   alu_src.swizzle[0] = c
   mov = mesa.nir_alu_instr_create(b.shader, mesa.nir_op_mov)
-  ctypes.cast(mov.contents.src, ctypes.POINTER(mesa.nir_alu_src))[0] = alu_src
+  # Write alu_src directly to live memory - bypass ctypes caching on mov.contents
+  _mov_addr = ctypes.cast(mov, ctypes.c_void_p).value
+  ctypes.memmove(_mov_addr + mesa.struct_nir_alu_instr.src.offset, ctypes.addressof(alu_src), ctypes.sizeof(mesa.nir_alu_src))
   return mov
 
-def nimm_set(imm:mesa.nir_def, x, dtype:DType):
-  instr = ctypes.cast(imm.parent_instr, ctypes.POINTER(mesa.nir_load_const_instr))
-  struct.pack_into(unwrap(dtype.fmt), (ctypes.c_ubyte * dtype.itemsize).from_address(ctypes.addressof(instr.contents.value)), 0, truncate[dtype](x))
+def nimm_set(imm, x, dtype:DType):
+  # imm is POINTER(nir_def). Mesa 26.2 removed parent_instr from nir_def, so
+  # compute the parent load_const_instr address via the _def field offset.
+  # Works on both Mesa 25.2 and 26.2 since _def is at the same offset.
+  _def_off = mesa.struct_nir_load_const_instr._def.offset
+  _val_off = mesa.struct_nir_load_const_instr.value.offset
+  _imm_addr = ctypes.cast(imm, ctypes.c_void_p).value
+  _val_addr = _imm_addr - _def_off + _val_off
+  struct.pack_into(unwrap(dtype.fmt), (ctypes.c_ubyte * dtype.itemsize).from_address(_val_addr), 0, truncate[dtype](x))
 
 @nir_instr(nc=1, bs=lambda dtype: dtype.bitsize)
-def nimm(b:mesa.nir_builder, x, dtype:DType) -> mesa.nir_def:
-  nimm_set((instr:=mesa.nir_load_const_instr_create(b.shader, 1, dtype.bitsize)).contents._def, x, dtype)
+def nimm(b, x, dtype:DType):
+  instr = mesa.nir_load_const_instr_create(b.shader, 1, dtype.bitsize)
+  nimm_set(_def_ptr(instr), x, dtype)
   return instr
 @nir_instr(nc=1, bs=lambda dtype: dtype.bitsize)
 def nundef(b, dtype): return mesa.nir_undef_instr_create(b.shader, 1, dtype.bitsize)
 
-deref_var = nir_instr(nc=1, bs=32, modes=lambda var:var.data.mode, type=lambda var:var.type, var=lambda var:ctypes.pointer(var))( # pylint: disable=W0108
+deref_var = nir_instr(nc=1, bs=32, modes=lambda var:var.contents.data.mode, type=lambda var:var.contents.type, var=lambda var:var)(
   lambda b, var: mesa.nir_deref_instr_create(b.shader, mesa.nir_deref_type_var))
 
 def scope(space): return 'global' if space == AddrSpace.GLOBAL else ('shared' if space == AddrSpace.LOCAL else 'deref')
-nstore = nir_instr(has_def=False, df=lambda addr:addr, intrins=lambda space,val: {"WRITE_MASK":(1<<val.num_components)-1,
-  **({"ALIGN_MUL":val.bit_size//8*val.num_components} if space != AddrSpace.REG else {})},
-  num_components=lambda val:val.num_components, srcs=lambda space, addr, val: [nsrc(val), nsrc(addr)][::1 if space != AddrSpace.REG else -1])(
+nstore = nir_instr(has_def=False, df=lambda addr:addr, intrins=lambda space,val: {
+    "WRITE_MASK":(1<<val.contents.num_components)-1,
+    **({} if space == AddrSpace.REG else {"ALIGN_MUL":val.contents.bit_size//8*val.contents.num_components})},
+  num_components=lambda val:val.contents.num_components, srcs=lambda space, addr, val: [nsrc(val), nsrc(addr)][::1 if space != AddrSpace.REG else -1])(
     lambda b, space, addr, val: mesa.nir_intrinsic_instr_create(b.shader, g(f"nir_intrinsic_store_{scope(space)}")))
 nload = nir_instr(nc=lambda u:u.max_numel(), bs=lambda u:u.dtype.bitsize, num_components=lambda u:u.max_numel(),
   intrins=lambda space,u:{**({"ACCESS":mesa.ACCESS_CAN_REORDER} if space==AddrSpace.GLOBAL else {}),
-                          **({"ALIGN_MUL":u.dtype.itemsize*u.max_numel()} if space != AddrSpace.REG else {})}, srcs=lambda addr: [nsrc(addr)])(
+                          **({} if space == AddrSpace.REG else {"ALIGN_MUL":u.dtype.itemsize*u.max_numel()})}, srcs=lambda addr: [nsrc(addr)])(
     lambda b, space, addr, u: mesa.nir_intrinsic_instr_create(b.shader, g(f"nir_intrinsic_load_{scope(space)}")))
 
 ngid = nir_instr(nc=3, bs=32)(lambda b: mesa.nir_intrinsic_instr_create(b.shader, mesa.nir_intrinsic_load_workgroup_id))
@@ -102,17 +139,37 @@ nbarrier = nir_instr(has_def=False, intrins={"EXECUTION_SCOPE":mesa.SCOPE_WORKGR
            else_target=lambda else_tgt: else_tgt and ctypes.pointer(else_tgt))
 def njump(b:mesa.nir_builder, typ, tgt=None, cond=None, else_tgt=None): return mesa.nir_jump_instr_create(b.shader, typ)
 
-def if_phi(b:mesa.nir_builder, cond, then_fn, else_fn): return mesa.nir_if_phi(b, *nif(b, cond, then_fn, else_fn)).contents
+def if_phi(b, cond, then_fn, else_fn): return mesa.nir_if_phi(b, *nif(b, cond, then_fn, else_fn))
 
-def nidx(b:mesa.nir_builder, buf, off, space, itemsize, gate=None) -> mesa.nir_def:
-  @nir_instr(nc=1, bs=32, modes=lambda buf: buf.data.mode, type=lambda buf: mesa.glsl_get_array_element(buf.type))
-  def reg(b, buf):
+def nidx(b, buf, off, space, itemsize, gate=None):
+  @nir_instr(nc=1, bs=32, modes=lambda buf: buf.contents.data.mode, type=lambda buf: mesa.glsl_get_array_element(buf.contents.type))
+  def reg(b, buf, idx):
     deref = mesa.nir_deref_instr_create(b.shader, mesa.nir_deref_type_array)
-    deref.contents.parent, deref.contents.arr.index = nsrc(deref_var(b, buf)), nsrc(off)
+    _deref_addr = ctypes.cast(deref, ctypes.c_void_p).value
+    parent_src = nsrc(deref_var(b, buf))
+    idx_src = nsrc(idx)
+    ctypes.memmove(_deref_addr + mesa.struct_nir_deref_instr.parent.offset, ctypes.addressof(parent_src), ctypes.sizeof(mesa.nir_src))
+    ctypes.memmove(_deref_addr + mesa.struct_nir_deref_instr.arr.offset, ctypes.addressof(idx_src), ctypes.sizeof(mesa.nir_src))
     return deref
-  f = (functools.partial(reg, b, buf) if space == AddrSpace.REG else
-       lambda: nalu(b, "iadd", buf, nalu(b, "imul", off, nimm(b, itemsize, dtypes.long))))
-  return if_phi(b, gate, f, lambda: buf) if gate is not None else f()
+  if space == AddrSpace.REG:
+    f = functools.partial(reg, b, buf, off)
+    else_f = functools.partial(reg, b, buf, nimm(b, 0, dtypes.int))
+  else:
+    f = lambda: nalu(b, "iadd", buf, nalu(b, "imul", off, nimm(b, itemsize, dtypes.long)))
+    else_f = lambda: buf
+  return if_phi(b, gate, f, else_f) if gate is not None else f()
+
+class _BuilderPointer:
+  """Wraps POINTER(nir_builder) so ctypes passes the raw pointer to C functions
+  that expect nir_builder*. nir_builder_init_simple_shader returns nir_builder BY
+  VALUE; without this wrapper, cursor mutations (inside nir_builder_instr_insert)
+  are lost because ctypes copies the value to a temporary stack buffer."""
+  def __init__(self, ptr):
+    self._ptr = ptr
+    self._as_parameter_ = ptr
+  def __getattr__(self, name): return getattr(self._ptr.contents, name)
+
+
 
 class NIRRenderer(Renderer):
   suffix = "NIR"
@@ -151,9 +208,7 @@ class NIRRenderer(Renderer):
      lambda ctx,buf,off,val: nstore(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize), ctx.r[val])),
     (UPat(Ops.LOAD, src=(UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"), UPat.var("off")), allow_any_len=True), UPat.var("alt"),
                          UPat.var("gate")), name="x"),
-     lambda ctx,x,buf,off,alt,gate: if_phi(ctx.b, ctx.r[gate],
-      lambda: nload(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize, ctx.r[gate]), x),
-      lambda: ctx.r[alt])),
+     lambda ctx,x,buf,off,alt,gate: if_phi(ctx.b, ctx.r[gate], lambda: nload(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize, ctx.r[gate]), x), lambda: ctx.r[alt])),
     (UPat(Ops.LOAD, src=(UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"), UPat.var("off")), allow_any_len=True),), name="x"),
      lambda ctx,x,buf,off: nload(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize), x)),
     (UPat(Ops.STACK, name="x"), lambda ctx,x: nalu(ctx.b, f"vec{x.max_numel()}", *[ctx.r[src] for src in x.src])),
@@ -161,7 +216,7 @@ class NIRRenderer(Renderer):
     (UPat(Ops.CAST, name="x"), lambda ctx,x: ncast(ctx.b, ctx.r[x.src[0]], x.src[0].dtype, x.dtype)),
     (UPat(Ops.BITCAST, src=(UPat.var("a"),), allow_any_len=True), lambda ctx,a: ctx.r[a]),
     (UPat(Ops.BUFFER, name="x"), lambda ctx,x: mesa.nir_local_variable_create(ctx.b.impl,
-      mesa.glsl_array_type(glsl_type(x.dtype), x.max_numel(), 0).contents, f"acc{x.arg.slot}".encode()).contents),
+      mesa.glsl_array_type(glsl_type(x.dtype), x.max_numel(), 0), f"acc{x.arg.slot}".encode())),
     (UPat(Ops.BARRIER), lambda ctx: nbarrier(ctx.b)),
     (UPat(Ops.IF, name="x"), lambda ctx,x: mesa.nir_push_if(ctx.b, ctx.r[x.src[0]])),
     (UPat(Ops.ENDIF, name="x"), lambda ctx,x: (lambda _: mesa.nir_def())(mesa.nir_pop_if(ctx.b, ctx.r[x.src[0]])))
@@ -177,9 +232,13 @@ class NIRRenderer(Renderer):
   def __del__(self):
     if getattr(self, "_deinit_types", False): mesa.glsl_type_singleton_decref()
 
-  def param(self, b:mesa.nir_builder, x, sz:int) -> mesa.nir_def: raise NotImplementedError("needs param")
+  def param(self, b, x, sz:int): raise NotImplementedError("needs param")
   def prerender(self, uops:list[UOp]):
-    self.b = mesa.nir_builder_init_simple_shader(mesa.MESA_SHADER_COMPUTE, mesa.nir_shader_compiler_options.from_buffer_copy(self.nir_options), None)
+    # Use options_ptr (raw C pointer) if available — avoids 248-byte truncation
+    # on Mesa 26.2 where nir_shader_compiler_options grew significantly.
+    opts = self.compiler.options_ptr if hasattr(self.compiler, "options_ptr") else mesa.nir_shader_compiler_options.from_buffer_copy(self.nir_options)
+    self._b = mesa.nir_builder_init_simple_shader(mesa.MESA_SHADER_COMPUTE, opts, None)
+    self.b = _BuilderPointer(ctypes.pointer(self._b))
     self.b.shader.contents.info.workgroup_size_variable = any([u.op == Ops.SPECIAL and u.arg[0] == 'i' for u in uops])
   def postrender(self, uops:list[UOp]): pass
 
@@ -209,7 +268,7 @@ class NIRRenderer(Renderer):
           ranges.append(None)
           mesa.nir_push_loop(self.b)
         else:
-          ranges.append(i:=deref_var(self.b, mesa.nir_local_variable_create(self.b.impl, glsl_type(u.dtype), f"idx{range_str(u)}".encode()).contents))
+          ranges.append(i:=deref_var(self.b, mesa.nir_local_variable_create(self.b.impl, glsl_type(u.dtype), f"idx{range_str(u)}".encode())))
           nstore(self.b, AddrSpace.REG, i, nimm(self.b, 0, u.dtype))
           mesa.nir_push_loop(self.b)
           self.r[u] = nload(self.b, AddrSpace.REG, i, u)
@@ -272,7 +331,7 @@ class LVPRenderer(NIRRenderer):
 
 def tovec(b, idx_y, idx_x): return nalu(b, "vec4", idx_x, idx_y, nundef(b, dtypes.int), nundef(b, dtypes.int))
 def nfloat(dtype): return mesa.nir_type_float16 if dtype == dtypes.half else mesa.nir_type_float32
-nstore_img = nir_instr(has_def=False, df=lambda img:img, num_components=lambda val:val.num_components,
+nstore_img = nir_instr(has_def=False, df=lambda img:img, num_components=lambda val:val.contents.num_components,
   intrins=lambda dtype:{'IMAGE_DIM':mesa.GLSL_SAMPLER_DIM_2D, 'ACCESS':mesa.ACCESS_CAN_REORDER, 'SRC_TYPE':nfloat(dtype)},
   srcs=lambda b,img,idx_y,idx_x,val:[nsrc(x) for x in [img, tovec(b, idx_y, idx_x), nundef(b, dtypes.int), val, nimm(b, 0, dtypes.int)]])(
     lambda b,img,idx_y,idx_x,val,dtype:mesa.nir_intrinsic_instr_create(b.shader,g("nir_intrinsic_image_store")))
