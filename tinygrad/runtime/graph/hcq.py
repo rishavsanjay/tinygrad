@@ -38,7 +38,8 @@ class HCQGraph(MultiGraphRunner):
     kargs_alloc: dict[Compiled, BumpAllocator] = {dev:BumpAllocator(buf.size) for dev,buf in self.kernargs_bufs.items()}
     for j, runtime in enumerate(self.runtimes):
       if runtime is None: continue
-      argsbuf = self.kernargs_bufs[runtime.dev].offset(kargs_alloc[runtime.dev].alloc(runtime.kernargs_alloc_size, 16))
+      argsbuf = self.kernargs_bufs[runtime.dev].offset(kargs_alloc[runtime.dev].alloc(runtime.kernargs_alloc_size, 16),
+                                                       size=runtime.kernargs_alloc_size)
       self.ji_args[j] = runtime.fill_kernargs(self.hcq_bufs[j], self.calls[j][1].arg.vars, argsbuf)
 
     # Schedule Dependencies.

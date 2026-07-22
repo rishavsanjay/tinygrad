@@ -1,4 +1,4 @@
-import base64, ctypes, pathlib, tempfile, hashlib
+import base64, ctypes, pathlib, tempfile, hashlib, os
 from tinygrad.device import Compiler
 from tinygrad.helpers import cpu_objdump, system, data64
 from tinygrad.runtime.autogen import mesa, llvm, libc
@@ -88,7 +88,7 @@ class NAKCompiler(Compiler):
 
 def disas_adreno(lib:bytes, gpu_id=630):
   with tempfile.TemporaryFile('w+') as tf:
-    mesa_fp = ctypes.cast(fp:=libc.fdopen(tf.fileno(), b"w"), ctypes.POINTER(mesa.struct__IO_FILE))
+    mesa_fp = ctypes.cast(fp:=libc.fdopen(os.dup(tf.fileno()), b"w"), ctypes.POINTER(mesa.struct__IO_FILE))
     @ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p)
     def hd(data, n, instr):
       fst, snd = data64(ctypes.cast(instr, ctypes.POINTER(ctypes.c_uint64)).contents.value)
@@ -97,6 +97,7 @@ def disas_adreno(lib:bytes, gpu_id=630):
 
     mesa.ir3_isa_disasm(lib, len(lib), mesa_fp, mesa.struct_isa_decode_options(gpu_id, True, 0, True, pre_instr_cb=hd))
     libc.fflush(fp)
+    libc.fclose(fp)
     tf.seek(0)
     print(tf.read())
 

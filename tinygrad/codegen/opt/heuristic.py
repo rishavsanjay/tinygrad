@@ -46,10 +46,20 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
 
   # make a copy so it does not mutate the input
   k = k.copy()
+  qcom_a8_image = IMAGE == 1 and k.ren.target.device == "QCOM" and k.ren.target.arch.startswith("a8")
 
   # upcast float4 images, this must be early so we don't accidentally add locals before the upcast
   if IMAGE:
-    for buf_index,buf in enumerate(k.bufs):
+    image_upcasts = 0
+    image_upcast_limit = getenv("IMAGE_UPCAST_LIMIT", 1 if qcom_a8_image else 0)
+    image_upcast_amount = getenv("IMAGE_UPCAST_AMOUNT", 16 if qcom_a8_image else 4)
+    reduce_rngs = set(k.ranges_of(AxisType.REDUCE))
+    # Prefer a reduction operand over an elementwise residual/output. The latter can force a spatial
+    # multiple-of-four tile solely to form an image access, increasing accumulator pressure and cutting occupancy on QCOM.
+    buf_order = sorted(range(len(k.bufs)), key=lambda i: not any(r in k.bufs[i].src[1].backward_slice for r in reduce_rngs))
+    for buf_index in buf_order:
+      if image_upcast_limit and image_upcasts >= image_upcast_limit: break
+      buf = k.bufs[buf_index]
       if image_valid_dims(buf.src[0].dtype, buf.src[0].max_numel(), k.ren.target.arch):
         idx = k.bufs[buf_index].src[1]
         # IMAGE upcasts require one validity shared by all four unit-stride lanes so memory_coalescing can combine them into one vector read.
@@ -57,9 +67,16 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
           c.op is Ops.RANGE and (c.vmax+1)%4 == 0 and c not in idx.get_valid().backward_slice]
         if len(unit_stride_axes_mul_4):
           if (axis:=unit_stride_axes_mul_4[0]) in k.upcastable_dims:
-            k.apply_opt(Opt(OptOps.UPCAST, axis, 4))
+            amount = image_upcast_amount if k.full_shape[axis] % image_upcast_amount == 0 else 4
+            k.apply_opt(Opt(OptOps.UPCAST, axis, amount))
+            k.image_slots.add(buf.src[0].arg.slot)
+            image_upcasts += 1
           elif axis in k.unrollable_dims:
-            k.apply_opt(Opt(OptOps.UNROLL, k.unrollable_dims.index(axis), 4))
+            amount = image_upcast_amount if k.full_shape[axis] % image_upcast_amount == 0 else 4
+            k.apply_opt(Opt(OptOps.UNROLL, k.unrollable_dims.index(axis), amount))
+            k.image_slots.add(buf.src[0].arg.slot)
+            image_upcasts += 1
+  qcom_a8_selected = qcom_a8_image and bool(k.image_slots)
 
   # should use matvec - TODO: adjust/tune based on the wide vs tall/large vs small mat
   MV_BLOCKSIZE, MV_THREADS_PER_ROW, MV_ROWS_PER_THREAD = getenv("MV_BLOCKSIZE", 4), getenv("MV_THREADS_PER_ROW", 8), getenv("MV_ROWS_PER_THREAD", 4)
@@ -104,7 +121,7 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
     if k.full_shape[axis] <= 7 and is_masked and prod(k.full_shape[j] for j in to_upcast) * k.full_shape[axis] <= 7 * 7:
       # upcasting a masked global axis moves that range out of the launch grid into each work-item
       # under IMAGE, skip the upcast unless enough global work-items remain after it to hide memory latency
-      if IMAGE and k.axis_types[axis] is AxisType.GLOBAL:
+      if IMAGE and (not qcom_a8_image or qcom_a8_selected) and k.axis_types[axis] is AxisType.GLOBAL:
         global_upcast = prod(k.full_shape[i] for i in to_upcast if k.axis_types[i] is AxisType.GLOBAL) * k.full_shape[axis]
         global_items_after = prod(k.full_shape[i] for i in k.axes_of(AxisType.GLOBAL)) // global_upcast
         if resolve(global_items_after < getenv("OCCUPANCY_FLOOR", 4096), False): continue
@@ -167,13 +184,16 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
     if NOLOCALS:
       k.apply_opt(Opt(OptOps.NOLOCALS))
     else:
+      local_max = getenv("LOCAL_MAX", 64 if qcom_a8_selected else 128)
       # prioritize making expand axes local
       local_axis_ranking = [(any(k.rngs[axis] not in b.src[1].get_idx().backward_slice for b in k.bufs), axis) \
                               for axis in k.axes_of(AxisType.GLOBAL, AxisType.LOOP) if k.rngs[axis].src[0].op is Ops.CONST]
       to_local: list[tuple[int, int]] = []
-      for _, axis in sorted(local_axis_ranking, key=lambda x: (-x[0], -x[1])):
+      local_reverse = getenv("LOCAL_REVERSE", 1 if qcom_a8_selected else 0)
+      for _, axis in sorted(local_axis_ranking, key=lambda x: (-x[0], x[1] if local_reverse else -x[1])):
         local_size = prod(sz for _, sz in to_local)
-        local_sz: int|None = next((x for x in ([32] * (axis == 0) + [16,8,4,3,2]) if k.full_shape[axis] % x == 0 and local_size * x <= 128), None)
+        local_sz: int|None = next((x for x in ([32] * (axis == 0) + [16,8,4,3,2])
+                                  if k.full_shape[axis] % x == 0 and local_size * x <= local_max), None)
         if local_sz is not None: to_local.append((axis, local_sz))
       deleted_shape = 0
       for axis, local_sz in sorted(to_local[:3]):

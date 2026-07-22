@@ -60,16 +60,22 @@ indexing_simplify = PatternMatcher([
 
 # get list of (height, width) that do not require pitch padding
 def image_valid_dims(base:DType, size:int, arch:str) -> list[tuple[int,int]]:
-  if (ALIGN:=next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("IMAGE_PITCH_ALIGNMENT=")), 0)) == 0: return []
+  qcom_align = next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("QCOM_IMAGE_PITCH_ALIGNMENT=")), 0)
+  if (ALIGN:=qcom_align or next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("IMAGE_PITCH_ALIGNMENT=")), 0)) == 0: return []
   MAXW, pxls = 16384, size // 4
-  if base not in (dtypes.half, dtypes.float) or size > 4*MAXW*MAXW: return []
+  if base not in (dtypes.half, dtypes.float) or size % 4 or size > 4*MAXW*MAXW: return []
+  # QCOM descriptors directly reinterpret contiguous buffers, so every row must satisfy Mesa's linear-layout alignment.
+  if qcom_align and pxls % ALIGN: return []
   # height=1 images just need to abide by alignment requirements in bytes, not pixels!
   if size % (ALIGN * 4) != 0: return [] if (base.itemsize * size) % (64 if OSX else ALIGN) != 0 or pxls > MAXW else [(1, pxls)]
   return [(pxls//ALIGN//k, ALIGN*k) for k in range(ceildiv(pxls//ALIGN, MAXW), min(pxls//ALIGN, MAXW//ALIGN)+1) if (pxls//ALIGN)%k == 0]
 
 def transform_to_image(ctx, buf:UOp, x:UOp) -> UOp|None:
-  shapes, ren = ctx
+  shapes, ren, image_slots = ctx
   if not IMAGE or ren.target.device not in {"QCOM", "CL", "PYTHON", "NULL"}: return None
+  # The optimizer records the operand whose float4 upcast selected the automatic image path. Do not opportunistically turn unrelated vector
+  # accesses into textures on A8xx; IMAGE=2 remains the explicit all-eligible/forced path.
+  if IMAGE == 1 and ren.target.device == "QCOM" and ren.target.arch.startswith("a8") and buf.arg.slot not in image_slots: return None
   valid, x = x.get_valid(), x.get_idx()
   # search for dims that drop the most valid statements
   best_drop, cands = -1, []

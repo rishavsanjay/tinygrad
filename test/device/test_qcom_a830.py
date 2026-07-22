@@ -1,13 +1,13 @@
 """Pure-logic unit tests for Adreno 830 / A7xx+ support."""
-import ctypes, unittest
-from tinygrad.runtime.ops_qcom import _decode_chip_id, pkt7_hdr, pkt4_hdr, parity, qreg, _NEW_FORMAT_TOP_BYTE_TO_GPU_ID
+import unittest
+from tinygrad.runtime.ops_qcom import _decode_chip_id, pkt7_hdr
 from tinygrad.runtime.autogen import mesa
 
 class TestChipIdDecoder(unittest.TestCase):
   def test_old_format_a630(self): self.assertEqual(_decode_chip_id(0x06030001), (630, 6, "a630"))
   def test_old_format_a730(self): self.assertEqual(_decode_chip_id(0x07030001), (730, 7, "a730"))
   def test_new_format_a740(self): self.assertEqual(_decode_chip_id(0x43050a01), (740, 7, "a740"))
-  def test_new_format_a830(self): self.assertEqual(_decode_chip_id(0x44050001), (830, 7, "a830"))
+  def test_new_format_a830(self): self.assertEqual(_decode_chip_id(0x44050001), (830, 8, "a830"))
 
 class TestPacketHeaders(unittest.TestCase):
   def test_pkt7_hdr(self):
@@ -37,7 +37,7 @@ class TestIR3CompilerArch(unittest.TestCase):
     a830_recognized = info_raw and info_raw.contents.chip != 0
     if a830_recognized:
       c = IR3Compiler("a830,chip_id=0x44050001")
-      self.assertEqual(c.cc.gen, 7)
+      self.assertEqual(c.cc.gen, 8)
       del c
     else:
       with self.assertRaises(RuntimeError):
