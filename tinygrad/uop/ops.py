@@ -1141,7 +1141,6 @@ class KernelInfo:
   axis_types: tuple[AxisType, ...] = tuple()
   dont_use_locals: bool = False # don't use local indexing
   applied_opts: tuple = tuple()
-  image_slots: tuple[int, ...] = tuple()
   opts_to_apply: tuple|None = None
   estimates: Estimates|None = None
   beam: int = 0

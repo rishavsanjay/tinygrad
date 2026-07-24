@@ -10,19 +10,14 @@ import base64, ctypes, struct, functools, inspect, itertools
 
 def g(s:str): return getattr(mesa, s)
 
-# NIR pointer-lifecycle safety: Mesa functions (nir_build_alu*, nir_def_init,
-# nir_builder_instr_insert) STORE received pointers. Passing ctypes VALUES from
-# .contents creates temporary stack copies whose addresses dangle after return.
-# Fix: all NIR object creators return POINTERS (LP_T), never .contents values.
+# Mesa 26.1 NIR constructors return pointers, and builder calls retain them.
 def nsrc(d) -> mesa.nir_src: return mesa.nir_src(ssa=d)
 
-def _def_ptr(instr) -> ctypes.POINTER:
-  """Extract POINTER(nir_def) from POINTER(nir_<type>_instr) via the _def field offset."""
+def _def_ptr(instr):
   return ctypes.cast(ctypes.cast(instr, ctypes.c_void_p).value + type(instr.contents)._def.offset,
                      ctypes.POINTER(mesa.struct_nir_def))
 
-def _instr_ptr(instr) -> ctypes.POINTER:
-  """Cast POINTER(nir_<type>_instr) to POINTER(nir_instr). Safe: nir_instr is at offset 0."""
+def _instr_ptr(instr):
   return ctypes.cast(instr, ctypes.POINTER(mesa.struct_nir_instr))
 
 def glsl_type(t:DType): return {
@@ -65,20 +60,16 @@ def nir_instr(nc=1, bs=lambda: None, intrins=None, srcs=None, has_def=True, df=N
         mesa.nir_def_init(_instr_ptr(instr), dptr, go(nc), go(bs))
       _instr_addr = ctypes.cast(instr, ctypes.c_void_p).value
       for k, v in go(intrins or {}).items():
-        idx = mesa.nir_intrinsic_infos[ctypes.c_uint32.from_address(_instr_addr + mesa.struct_nir_intrinsic_instr.intrinsic.offset).value].index_map[g(f"NIR_INTRINSIC_{k}")]
+        intrinsic = ctypes.c_uint32.from_address(_instr_addr + mesa.struct_nir_intrinsic_instr.intrinsic.offset).value
+        idx = mesa.nir_intrinsic_infos[intrinsic].index_map[g(f"NIR_INTRINSIC_{k}")]
         assert idx > 0, f"invalid intrinsic key {k!r} for mesa version (idx={idx})"
         ctypes.c_int32.from_address(_instr_addr + mesa.struct_nir_intrinsic_instr.const_index.offset + (idx - 1) * 4).value = go(v)
       for i, src in enumerate(go(srcs or [])):
         src_addr = _instr_addr + mesa.struct_nir_intrinsic_instr.src.offset + i * ctypes.sizeof(mesa.nir_src)
         src_val = go(src)
         ctypes.memmove(src_addr, ctypes.addressof(src_val), ctypes.sizeof(mesa.nir_src))
-      # Write non-intrinsic struct fields directly to live memory (bypass ctypes caching)
-      # Use setattr on a fresh instance bound to the live address to get correct type handling
-      live = type(instr.contents).from_address(_instr_addr)
-      for k, vcomp in {k: go(v) for k, v in contents.items() if go(v) is not None}.items():
-        if isinstance(vcomp, ctypes._Pointer): ctypes.c_void_p.from_address(_instr_addr + getattr(type(instr.contents), k).offset).value = ctypes.cast(vcomp, ctypes.c_void_p).value
-        elif isinstance(vcomp, ctypes.Structure): ctypes.memmove(_instr_addr + getattr(type(instr.contents), k).offset, ctypes.addressof(vcomp), ctypes.sizeof(vcomp))
-        else: setattr(live, k, vcomp)
+      for k, v in contents.items():
+        if (vcomp:=go(v)) is not None: setattr(instr.contents, k, vcomp)
       mesa.nir_builder_instr_insert(ba.arguments['b'], _instr_ptr(instr))
       go(also)
       return dptr if has_def else (mesa.nir_def() if df is None else go(df))
@@ -90,15 +81,13 @@ def nchannel(b, src, c:int):
   alu_src = mesa.nir_alu_src(src=nsrc(src))
   alu_src.swizzle[0] = c
   mov = mesa.nir_alu_instr_create(b.shader, mesa.nir_op_mov)
-  # Write alu_src directly to live memory - bypass ctypes caching on mov.contents
+  # src is a flexible array member and has a zero-length generated ctypes type.
   _mov_addr = ctypes.cast(mov, ctypes.c_void_p).value
   ctypes.memmove(_mov_addr + mesa.struct_nir_alu_instr.src.offset, ctypes.addressof(alu_src), ctypes.sizeof(mesa.nir_alu_src))
   return mov
 
 def nimm_set(imm, x, dtype:DType):
-  # imm is POINTER(nir_def). Mesa 26.2 removed parent_instr from nir_def, so
-  # compute the parent load_const_instr address via the _def field offset.
-  # Works on both Mesa 25.2 and 26.2 since _def is at the same offset.
+  # Mesa 26.1 removed nir_def.parent_instr; recover the containing load_const through _def's offset.
   _def_off = mesa.struct_nir_load_const_instr._def.offset
   _val_off = mesa.struct_nir_load_const_instr.value.offset
   _imm_addr = ctypes.cast(imm, ctypes.c_void_p).value
@@ -120,7 +109,8 @@ def scope(space): return 'global' if space == AddrSpace.GLOBAL else ('shared' if
 nstore = nir_instr(has_def=False, df=lambda addr:addr, intrins=lambda space,val: {
     "WRITE_MASK":(1<<val.contents.num_components)-1,
     **({} if space == AddrSpace.REG else {"ALIGN_MUL":val.contents.bit_size//8*val.contents.num_components})},
-  num_components=lambda val:val.contents.num_components, srcs=lambda space, addr, val: [nsrc(val), nsrc(addr)][::1 if space != AddrSpace.REG else -1])(
+  num_components=lambda val:val.contents.num_components,
+  srcs=lambda space, addr, val: [nsrc(val), nsrc(addr)][::1 if space != AddrSpace.REG else -1])(
     lambda b, space, addr, val: mesa.nir_intrinsic_instr_create(b.shader, g(f"nir_intrinsic_store_{scope(space)}")))
 nload = nir_instr(nc=lambda u:u.max_numel(), bs=lambda u:u.dtype.bitsize, num_components=lambda u:u.max_numel(),
   intrins=lambda space,u:{**({"ACCESS":mesa.ACCESS_CAN_REORDER} if space==AddrSpace.GLOBAL else {}),
@@ -155,21 +145,16 @@ def nidx(b, buf, off, space, itemsize, gate=None):
     f = functools.partial(reg, b, buf, off)
     else_f = functools.partial(reg, b, buf, nimm(b, 0, dtypes.int))
   else:
-    f = lambda: nalu(b, "iadd", buf, nalu(b, "imul", off, nimm(b, itemsize, dtypes.long)))
-    else_f = lambda: buf
+    def f(): return nalu(b, "iadd", buf, nalu(b, "imul", off, nimm(b, itemsize, dtypes.long)))
+    def else_f(): return buf
   return if_phi(b, gate, f, else_f) if gate is not None else f()
 
 class _BuilderPointer:
-  """Wraps POINTER(nir_builder) so ctypes passes the raw pointer to C functions
-  that expect nir_builder*. nir_builder_init_simple_shader returns nir_builder BY
-  VALUE; without this wrapper, cursor mutations (inside nir_builder_instr_insert)
-  are lost because ctypes copies the value to a temporary stack buffer."""
+  # init_simple_shader returns by value, while all builder operations need the address of that same object.
   def __init__(self, ptr):
     self._ptr = ptr
     self._as_parameter_ = ptr
   def __getattr__(self, name): return getattr(self._ptr.contents, name)
-
-
 
 class NIRRenderer(Renderer):
   suffix = "NIR"
@@ -208,7 +193,9 @@ class NIRRenderer(Renderer):
      lambda ctx,buf,off,val: nstore(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize), ctx.r[val])),
     (UPat(Ops.LOAD, src=(UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"), UPat.var("off")), allow_any_len=True), UPat.var("alt"),
                          UPat.var("gate")), name="x"),
-     lambda ctx,x,buf,off,alt,gate: if_phi(ctx.b, ctx.r[gate], lambda: nload(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize, ctx.r[gate]), x), lambda: ctx.r[alt])),
+     lambda ctx,x,buf,off,alt,gate: if_phi(ctx.b, ctx.r[gate],
+       lambda: nload(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize, ctx.r[gate]), x),
+       lambda: ctx.r[alt])),
     (UPat(Ops.LOAD, src=(UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"), UPat.var("off")), allow_any_len=True),), name="x"),
      lambda ctx,x,buf,off: nload(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize), x)),
     (UPat(Ops.STACK, name="x"), lambda ctx,x: nalu(ctx.b, f"vec{x.max_numel()}", *[ctx.r[src] for src in x.src])),
@@ -234,8 +221,6 @@ class NIRRenderer(Renderer):
 
   def param(self, b, x, sz:int): raise NotImplementedError("needs param")
   def prerender(self, uops:list[UOp]):
-    # Use options_ptr (raw C pointer) if available — avoids 248-byte truncation
-    # on Mesa 26.2 where nir_shader_compiler_options grew significantly.
     opts = self.compiler.options_ptr if hasattr(self.compiler, "options_ptr") else mesa.nir_shader_compiler_options.from_buffer_copy(self.nir_options)
     self._b = mesa.nir_builder_init_simple_shader(mesa.MESA_SHADER_COMPUTE, opts, None)
     self.b = _BuilderPointer(ctypes.pointer(self._b))

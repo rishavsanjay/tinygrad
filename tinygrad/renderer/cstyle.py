@@ -58,7 +58,7 @@ base_rewrite = PatternMatcher([
   (UPat(Ops.LOAD, src=(UPat.var('bidx'),)), lambda ctx,bidx: f"({ctx.render_access(bidx)})"),
   (UPat(Ops.LOAD, src=(UPat.var("bidx"), UPat.var("var"), UPat.var("gate"))),
    lambda ctx,bidx,var,gate: f"({ctx[gate]}?{ctx.render_access(bidx)}:{ctx[var]})"),
-  (UPat(Ops.STORE, src=(UPat.var('bidx'), UPat.var("var"))), lambda ctx,bidx,var: f"{ctx.render_access(bidx, override_dtype=var.dtype)} = {ctx[var]};"),
+  (UPat(Ops.STORE, src=(UPat.var('bidx'), UPat.var("var"))), lambda ctx,bidx,var: f"{ctx.render_access(bidx)} = {ctx[var]};"),
 
   # alu/gep
   (UPat(Ops.WMMA, name="x"), lambda ctx,x: f"__{_wmma_name(x)}({ctx[x.src[0]]}, {ctx[x.src[1]]}, {ctx[x.src[2]]})"),
@@ -185,10 +185,9 @@ class CStyleLanguage(Renderer):
     return prefix + self.type_map.get(scalar:=dtype.scalar(), scalar.name) + suffix
 
   def render_type(self, u:UOp): return self._render_dtype(u.dtype, u.max_numel(), u.addrspace, shape=u._shape)
-  def render_access(self, u:UOp, override_dtype=None):
-    dtype = override_dtype or u.dtype
-    if u.max_numel() > 1 or dtype != u.src[0].dtype:
-      return f"*(({self._render_dtype(dtype, u.max_numel(), u.addrspace, override_ptr=True, shape=u._shape)})({self[u]}))"
+  def render_access(self, u:UOp):
+    if u.max_numel() > 1 or u.dtype != u.src[0].dtype:
+      return f"*(({self._render_dtype(u.dtype, u.max_numel(), u.addrspace, override_ptr=True, shape=u._shape)})({self[u]}))"
     else: return f"*{self[u]}"
   def render_cast(self, u:UOp, val:str) -> str: return f"({self.render_type(u)})({val})"
 

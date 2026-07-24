@@ -5,15 +5,12 @@ from tinygrad.helpers import round_up, getenv
 class BumpAllocator:
   def __init__(self, size:int, base:int=0, wrap:bool=True, wrap_callback=None):
     self.size, self.ptr, self.base, self.wrap, self.wrap_callback = size, 0, base, wrap, wrap_callback
-    self.wrap_count, self.total_allocated = 0, 0
   def alloc(self, size:int, alignment:int=1) -> int:
     if round_up(self.ptr, alignment) + size > self.size:
       if not self.wrap: raise RuntimeError("Out of memory")
       if self.wrap_callback is not None: self.wrap_callback()
       self.ptr = 0
-      self.wrap_count += 1
     self.ptr = (res:=round_up(self.ptr, alignment)) + size
-    self.total_allocated += size
     return res + self.base
 
 class TLSFAllocator:

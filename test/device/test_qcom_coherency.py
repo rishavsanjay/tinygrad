@@ -10,7 +10,7 @@ import numpy as np
 
 from tinygrad import Device, Tensor, TinyJit, Variable, dtypes
 from tinygrad.device import Buffer, BufferSpec
-from tinygrad.helpers import DEV
+from tinygrad.helpers import DEV, IMAGE
 from tinygrad.runtime.support.hcq import HCQBuffer, HCQCompiled
 from tinygrad.runtime.support.memory import BumpAllocator
 from tinygrad.uop.ops import Ops
@@ -60,6 +60,21 @@ class TestQCOMCoherency(unittest.TestCase):
       addrs.append(int(inp.uop.buffer._buf.va_addr))
       got.append(int(transform(inp).item()))
     self.assertEqual(got, [22, 58, 94, 130, 166])
+    self.assertGreater(len(set(addrs)), 1)
+    _assert_hcq_graph(self, transform)
+
+  @unittest.skipUnless(IMAGE.value, "QCOM image mode required")
+  def test_image_descriptor_address_changes_on_graph_replay(self):
+    @TinyJit
+    def transform(inp: Tensor):
+      intermediate = (inp + 1).contiguous().realize()
+      return (intermediate * 2).contiguous().realize()
+
+    addrs = []
+    for value in (3, 7, 11, 15, 19):
+      inp = Tensor.full((7, 16, 4), value, device=Device.DEFAULT).contiguous().realize()
+      addrs.append(int(inp.uop.buffer._buf.va_addr))
+      np.testing.assert_equal(transform(inp).numpy(), np.full((7, 16, 4), (value + 1) * 2, dtype=np.float32))
     self.assertGreater(len(set(addrs)), 1)
     _assert_hcq_graph(self, transform)
 
@@ -144,8 +159,6 @@ class TestQCOMAllocationOptions(unittest.TestCase):
     self.assertEqual(allocator.alloc(12), 0)
     self.assertEqual(allocator.alloc(8), 0)
     self.assertEqual(events, [12])
-    self.assertEqual(allocator.wrap_count, 1)
-    self.assertEqual(allocator.total_allocated, 20)
 
   def test_command_arena_wait_uses_last_submitted_kgsl_timestamp(self):
     from tinygrad.runtime.autogen import kgsl

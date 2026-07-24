@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, ctypes, functools, mmap, struct, array, math, sys, weakref, contextlib
+import os, ctypes, functools, mmap, struct, array, math, sys, weakref, contextlib, re
 from dataclasses import dataclass
 assert sys.platform != 'win32'
 from typing import Any, cast
@@ -17,27 +17,19 @@ if getenv("IOCTL"): import extra.qcom_gpu_driver.opencl_ioctl  # noqa: F401  # p
 
 BUFTYPE_BUF, BUFTYPE_TEX, BUFTYPE_IBO = 0, 1, 2
 
-_NEW_FORMAT_TOP_BYTE_TO_GPU_ID: dict[int, int] = {
-  0x40: 720, 0x41: 721, 0x42: 725, 0x43: 740, 0x44: 830, 0x45: 830,
-}
-
 def _decode_chip_id(chip_id: int) -> tuple[int, int, str]:
   """Return (gpu_id_small, gen, arch_str) for a KGSL chip_id."""
   top = (chip_id >> 24) & 0xFF
   if top < 0x10:
-    major, minor = top, (chip_id >> 16) & 0xFF
-    gpu_id_small = major * 100 + minor * 10
-    return gpu_id_small, (6 if major < 7 else 7 if major < 8 else 8), f"a{gpu_id_small}"
-  if (gpu_id_small := _NEW_FORMAT_TOP_BYTE_TO_GPU_ID.get(top)) is not None:
-    return gpu_id_small, (8 if gpu_id_small >= 800 else 7), f"a{gpu_id_small}"
-  import re as _re
+    gpu_id_small = top * 100 + ((chip_id >> 16) & 0xFF) * 10
+    return gpu_id_small, gpu_id_small // 100, f"a{gpu_id_small}"
   dev_id = mesa.struct_fd_dev_id(0, chip_id)
-  name = mesa.fd_dev_name(dev_id)
+  name = mesa.fd_dev_name(ctypes.byref(dev_id))
   if name:
-    s = name.decode() if isinstance(name, bytes) else name
-    if (m := _re.search(r"(\d{3,})", s)):
+    s = ctypes.string_at(name).decode()
+    if (m := re.search(r"(\d{3,})", s)):
       gpu_id_small = int(m.group(1))
-      return gpu_id_small, (8 if gpu_id_small >= 800 else 7), f"a{gpu_id_small}"
+      return gpu_id_small, gpu_id_small // 100, f"a{gpu_id_small}"
   raise RuntimeError(f"Unknown Adreno chip_id={chip_id:#x}")
 
 @functools.cache
@@ -69,10 +61,10 @@ class QCOMImageLayout:
   row_pitch: int
   array_pitch: int
   pitch_alignment: int
-  size: int
-
   @property
   def pitchalign(self): return ctz(self.pitch_alignment) - 6
+  @property
+  def size(self): return self.array_pitch
 
 def qcom_image_layout(dtype:DType, shape:tuple[int, ...], row_pitch:int|None=None) -> QCOMImageLayout:
   """Linear RGBA layout matching fdl6_layout_image's A6xx+ explicit-layout requirements."""
@@ -87,7 +79,8 @@ def qcom_image_layout(dtype:DType, shape:tuple[int, ...], row_pitch:int|None=Non
   if row_pitch < width * bytes_per_pixel or row_pitch % pitch_alignment:
     raise ValueError(f"invalid QCOM image row pitch {row_pitch} for {shape} {dtype}; alignment is {pitch_alignment}")
   # fdl6_layout_image pads the last linear level to four rows. ARRAY_SLICE_OFFSET is unused for a plain 2D view, but keep it Mesa-exact.
-  return QCOMImageLayout(height, width, row_pitch, row_pitch * round_up(height, 4), pitch_alignment, row_pitch * height)
+  array_pitch = row_pitch * round_up(height, 4)
+  return QCOMImageLayout(height, width, row_pitch, array_pitch, pitch_alignment)
 
 def qcom_image_descriptor(gen:int, dtype:DType, shape:tuple[int, ...], addr, storage:bool=False,
                           row_pitch:int|None=None) -> list:
@@ -95,8 +88,8 @@ def qcom_image_descriptor(gen:int, dtype:DType, shape:tuple[int, ...], addr, sto
   layout = qcom_image_layout(dtype, shape, row_pitch)
   if isinstance(addr, int) and addr & (0x3f if gen >= 8 else 0x1f): raise ValueError(f"unaligned QCOM image address {addr:#x}")
   fmt = mesa.FMT6_32_32_32_32_FLOAT if dtype == dtypes.float else mesa.FMT6_16_16_16_16_FLOAT
-  if gen < 8:
-    # Keep the existing A6xx/A7xx descriptor shape. Storage-image swizzles are ignored by image stores.
+  if gen in (6, 7):
+    # A6xx/A7xx share the descriptor layout. Storage-image swizzles are ignored by image stores.
     desc = [(fmt << 22) if storage else 0x8 | (1 << 7) | (2 << 10) | (3 << 13) | (fmt << 22),
             layout.width | (layout.height << 15),
             layout.pitchalign | (layout.row_pitch << 7) | (mesa.A6XX_TEX_2D << 29),
@@ -121,11 +114,11 @@ def qcom_image_descriptor(gen:int, dtype:DType, shape:tuple[int, ...], addr, sto
 def qcom_sampler_descriptor(gen:int) -> list[int]:
   """Nearest, unnormalized, clamp-to-zero-border sampler for the generation's 16-byte layout."""
   clamp = mesa.A6XX_TEX_CLAMP_TO_BORDER
-  if gen < 8:
+  if gen in (6, 7):
     return [qreg.a6xx_tex_samp_0(wrap_s=clamp, wrap_t=clamp, wrap_r=clamp),
             qreg.a6xx_tex_samp_1(unnorm_coords=True, cubemapseamlessfiltoff=True), 0, 0]
   if gen == 8:
-    return [(clamp << 6) | (clamp << 9) | (clamp << 12), (1 << 30) | (1 << 31), 1, 0]
+    return [(clamp << 6) | (clamp << 9) | (clamp << 12), 1 << 31, 1, 0]
   raise ValueError(f"unsupported QCOM sampler generation {gen}")
 
 def parity(val: int):
@@ -197,7 +190,7 @@ class QCOMComputeQueue(HWQueue):
 
   def timestamp(self, signal:QCOMSignal):
     self.cmd(mesa.CP_WAIT_FOR_IDLE)
-    reg = 0x08e7 if self.dev.gpu_id_small >= 800 else mesa.REG_A6XX_CP_ALWAYS_ON_COUNTER
+    reg = mesa.REG_A8XX_CP_ALWAYS_ON_COUNTER if self.dev.gen == 8 else mesa.REG_A6XX_CP_ALWAYS_ON_COUNTER
     self.cmd(mesa.CP_REG_TO_MEM, qreg.cp_reg_to_mem_0(reg=reg, cnt=2, _64b=True),*data64_le(signal.timestamp_addr))
     return self
 
@@ -231,18 +224,17 @@ class QCOMComputeQueue(HWQueue):
     def cast_int(x, ceil=False): return (math.ceil(x) if ceil else int(x)) if isinstance(x, float) else x
     global_size_mp = [cast_int(g*l) for g,l in zip(global_size, local_size)]
 
-    # Preserve the branch's existing full-kernargs constant programming for buffer kernels. Image descriptors start at byte 2048 and must not be
-    # included: doing so grows the load beyond A8xx constant RAM, so image kernels use IR3's compiled constant footprint.
+    # Image descriptors start at byte 2048, outside the constant range. Buffer kernels retain the original 1 KiB constant load.
     if prg.tex_cnt or prg.ibo_cnt:
       const_dwords, const_load_units, const_ram_mode = prg.constlen, ceildiv(prg.constlen, 4), prg.const_ram_mode
     else:
-      const_dwords = const_load_units = round_up(args_state.buf.size // 4, 4)
-      const_ram_mode = (mesa.CONSTLEN_512 if const_dwords > 256 else mesa.CONSTLEN_256 if const_dwords > 192 else
-                        mesa.CONSTLEN_192 if const_dwords > 128 else mesa.CONSTLEN_128)
+      const_dwords, const_load_units, const_ram_mode = 256, 256, mesa.CONSTLEN_256
 
-    self.cmd(mesa.CP_SET_MARKER, qreg.a6xx_cp_set_marker_0(mode=mesa.RM6_COMPUTE))
-    # A8xx folds bindful UAV invalidation into per-stage state and removes the A6xx/A7xx CS_UAV bit.
-    self.reg(self.dev.reg_sp_update_cntl, qreg.a6xx_sp_update_cntl(cs_state=True, cs_uav=self.dev.gen < 8))
+    self.cmd(mesa.CP_SET_MARKER, (qreg.a8xx_cp_set_marker_0 if self.dev.gen == 8 else qreg.a6xx_cp_set_marker_0)(mode=mesa.RM6_COMPUTE))
+    update_cntl = (qreg.a6xx_sp_update_cntl(cs_state=True, cs_uav=True) if self.dev.gen == 6 else
+                   qreg.a7xx_sp_update_cntl(cs_state=True, cs_uav=True) if self.dev.gen == 7 else
+                   qreg.a8xx_sp_update_cntl(vs_state=True, hs_state=True, ds_state=True, gs_state=True, fs_state=True, cs_state=True))
+    self.reg(self.dev.reg_sp_update_cntl, update_cntl)
     self.reg(self.dev.reg_sp_update_cntl, 0x0)
 
     if self.dev.gen == 6:
@@ -265,10 +257,12 @@ class QCOMComputeQueue(HWQueue):
                0xfc | qreg.a6xx_sp_cs_wge_cntl(threadsize=prg.threadsize),
                cast_int(global_size[0], ceil=True), cast_int(global_size[1], ceil=True), cast_int(global_size[2], ceil=True))
     else:
+      tile_height = 3 if local_size[1] % 8 == 0 else 5 if local_size[1] % 4 == 0 else 9 if local_size[1] % 2 == 0 else 17
       self.reg(self.dev.reg_sp_cs_ndrange_0,
                qreg.a7xx_sp_cs_ndrange_0(kerneldim=3, localsizex=local_size[0] - 1, localsizey=local_size[1] - 1, localsizez=local_size[2] - 1),
                global_size_mp[0], 0, global_size_mp[1], 0, global_size_mp[2], 0,
-               qreg.a7xx_sp_cs_wge_cntl(linearlocalidregid=0xfc, threadsize=prg.threadsize),
+               qreg.a7xx_sp_cs_wge_cntl(linearlocalidregid=0xfc, threadsize=prg.threadsize,
+                                        workgrouprastorderzfirsten=True, wgtilewidth=4, wgtileheight=tile_height),
                0xfc000000 | local_size[0], local_size[1], local_size[2],
                qreg.a7xx_sp_cs_ndrange_7(localsizex=local_size[0] - 1, localsizey=local_size[1] - 1, localsizez=local_size[2] - 1))
 
@@ -304,16 +298,14 @@ class QCOMComputeQueue(HWQueue):
       self.cmd(mesa.CP_LOAD_STATE6_FRAG, qreg.cp_load_state6_0(state_type=mesa.ST_SHADER, state_src=mesa.SS6_INDIRECT,
                                                                state_block=mesa.SB6_CS_TEX, num_unit=args_state.prg.samp_cnt),
                *data64_le(args_state.buf.va_addr + args_state.prg.samp_off))
-      if self.dev.gen in (6, 8):
-        self.reg(mesa.REG_A6XX_SP_CS_SAMPLER_BASE, *data64_le(args_state.buf.va_addr + args_state.prg.samp_off))
-        self.reg(mesa.REG_A6XX_TPL1_CS_BORDER_COLOR_BASE, *data64_le(prg.dev.border_color_buf.va_addr))
+      self.reg(mesa.REG_A6XX_SP_CS_SAMPLER_BASE, *data64_le(args_state.buf.va_addr + args_state.prg.samp_off))
+      self.reg(mesa.REG_A6XX_TPL1_CS_BORDER_COLOR_BASE, *data64_le(prg.dev.border_color_buf.va_addr))
 
     if prg.tex_cnt > 0:
       self.cmd(mesa.CP_LOAD_STATE6_FRAG, qreg.cp_load_state6_0(state_type=mesa.ST_CONSTANTS, state_src=mesa.SS6_INDIRECT,
                                                                state_block=mesa.SB6_CS_TEX, num_unit=min(16, args_state.prg.tex_cnt)),
                *data64_le(args_state.buf.va_addr + args_state.prg.tex_off))
-      if self.dev.gen in (6, 8):
-        self.reg(mesa.REG_A6XX_SP_CS_TEXMEMOBJ_BASE, *data64_le(args_state.buf.va_addr + args_state.prg.tex_off))
+      self.reg(mesa.REG_A6XX_SP_CS_TEXMEMOBJ_BASE, *data64_le(args_state.buf.va_addr + args_state.prg.tex_off))
 
     if prg.ibo_cnt > 0:
       self.cmd(mesa.CP_LOAD_STATE6_FRAG, qreg.cp_load_state6_0(state_type=mesa.ST6_UAV, state_src=mesa.SS6_INDIRECT,
@@ -333,7 +325,7 @@ class QCOMComputeQueue(HWQueue):
                  qreg.a6xx_sp_cs_const_config_0(wgidconstid=prg.wgid, wgsizeconstid=prg.wgsz, wgoffsetconstid=0xfc, localidregid=prg.lid),
                  qreg.a6xx_sp_cs_wge_cntl(linearlocalidregid=0xfc, threadsize=mesa.THREAD64))
     else:
-      self.reg(self.dev.reg_sp_ps_wave_cntl, qreg.a7xx_sp_ps_wave_cntl(threadsize=prg.threadsize))
+      self.reg(self.dev.reg_sp_ps_wave_cntl, qreg.a7xx_sp_ps_wave_cntl(threadsize=mesa.THREAD64))
       self.reg(self.dev.reg_sp_cs_wie_cntl_1,
                qreg.a7xx_sp_cs_wie_cntl_1(linearlocalidregid=0xfc, threadsize=prg.threadsize,
                                           workitemrastorder=mesa.WORKITEMRASTORDER_LINEAR))
@@ -373,9 +365,6 @@ class QCOMArgsState(HCQArgsState):
       imgdt, shape, buf = b
       desc = qcom_image_descriptor(prg.dev.gen, imgdt, shape, buf.va_addr, storage=ibo,
                                    row_pitch=shape[1] * 4 * imgdt.itemsize)
-      if getenv("QCOM_DEBUG_IMAGE") and all(isinstance(x, int) for x in desc):
-        print(f"QCOM_IMAGE gen={prg.dev.gen} {'storage' if ibo else 'sampled'} dtype={imgdt} shape={shape} "
-              f"pitch={shape[1] * 4 * imgdt.itemsize} desc={' '.join(f'{x:08x}' for x in desc)}", flush=True)
       return desc
 
     self.bind_sints_to_buf(*flatten(map(_tex, texs)), buf=self.buf, fmt='I', offset=prg.tex_off)
@@ -404,11 +393,10 @@ class QCOMProgram(HCQProgram):
       self.buf_off, imm_off = cs.ubo_state.range[0].offset, cs.allocs.max_const_offset_vec4 * 16
       self.consts_info = [(struct.unpack_from("<I", imm_vals, i)[0], imm_off + i, 4) for i in range(0, len(imm_vals), 4)]
 
-      # see https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_shader.h#L525
-      # and https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_compiler_nir.c#L5389
+      # IR3 records sampled-image remapping separately from the total UAV count.
       self.samp_cnt, self.tex_cnt, self.ibo_cnt = (nt:=v.image_mapping.num_tex), nt, v.num_uavs - nt
       self.tex_to_image = v.image_mapping.tex_to_image[:]
-      # IR3 outputs a sampler for every texture (https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_compiler_nir.c#L1714)
+      # IR3 emits one sampler slot for every sampled texture.
       self.samplers = qcom_sampler_descriptor(dev.gen) * self.samp_cnt
 
       self.tex_off, self.ibo_off, self.samp_off = 2048, 2048 + 0x40 * self.tex_cnt, 2048 + 0x40 * (self.tex_cnt + self.ibo_cnt)
@@ -445,13 +433,6 @@ class QCOMProgram(HCQProgram):
     if self.max_threads < prod(local_size): raise RuntimeError("Too many resources requested for launch")
     if any(g*l>mx for g,l,mx in zip(global_size, local_size, [65536, 65536, 65536])) and any(l>mx for l,mx in zip(local_size, [1024, 1024, 1024])):
       raise RuntimeError(f"Invalid global/local dims {global_size=}, {local_size=}")
-    if getenv("QCOM_DEBUG_META"):
-      print(f"QCOM_META {self.name} {global_size=} {local_size=} image={self.image_size} instrlen={self.instrlen} "
-            f"constlen={self.constlen} threadsize={self.threadsize} regs={self.fregs}/{self.hregs} pvtmem={self.pvtmem} "
-            f"pvtmem_per_wave={getattr(self, 'pvtmem_per_wave', None)} samplers={self.samp_cnt} textures={self.tex_cnt} "
-            f"images={self.ibo_cnt}", flush=True)
-      for i, b in enumerate(bufs):
-        print(f"  buf {i}: va={getattr(b, 'va_addr', None):#x} size={getattr(b, 'size', None)} meta={getattr(b, 'meta', None)}", flush=True)
     return super().__call__(*bufs, global_size=global_size, local_size=local_size, vals=vals, wait=wait)
 
   def _parse_lib(self, lib):
@@ -576,18 +557,14 @@ class QCOMDevice(HCQCompiled):
       self.reg_sp_reg_prog_id_0    = mesa.REG_A6XX_SP_REG_PROG_ID_0
       self.reg_sp_cs_const_config  = mesa.REG_A6XX_SP_CS_CONST_CONFIG
       self.reg_sp_cs_ndrange_0     = mesa.REG_A6XX_SP_CS_NDRANGE_0
-      self.reg_sp_cs_wge_cntl      = mesa.REG_A6XX_SP_CS_WGE_CNTL
-      self.reg_sp_cs_kernel_group_x= mesa.REG_A6XX_SP_CS_KERNEL_GROUP_X
       self.reg_sp_cs_uav_base      = mesa.REG_A6XX_SP_CS_UAV_BASE
       self.reg_sp_ps_wave_cntl     = mesa.REG_A6XX_SP_PS_WAVE_CNTL
       self.reg_sp_cs_wie_cntl_1    = mesa.REG_A6XX_SP_CS_WIE_CNTL_1
     else:
-      self.reg_sp_update_cntl      = mesa.REG_A7XX_SP_UPDATE_CNTL
+      self.reg_sp_update_cntl      = mesa.REG_A8XX_SP_UPDATE_CNTL if self.gen == 8 else mesa.REG_A7XX_SP_UPDATE_CNTL
       self.reg_sp_reg_prog_id_0    = mesa.REG_A7XX_SP_REG_PROG_ID_0
       self.reg_sp_cs_const_config  = mesa.REG_A7XX_SP_CS_CONST_CONFIG
       self.reg_sp_cs_ndrange_0     = mesa.REG_A7XX_SP_CS_NDRANGE_0
-      self.reg_sp_cs_wge_cntl      = mesa.REG_A7XX_SP_CS_WGE_CNTL
-      self.reg_sp_cs_kernel_group_x= mesa.REG_A7XX_SP_CS_KERNEL_GROUP_X
       self.reg_sp_cs_uav_base      = mesa.REG_A7XX_SP_CS_UAV_BASE
       self.reg_sp_ps_wave_cntl     = mesa.REG_A7XX_SP_PS_WAVE_CNTL
       self.reg_sp_cs_wie_cntl_1    = mesa.REG_A7XX_SP_CS_WIE_CNTL_1

@@ -6,7 +6,7 @@ from tinygrad.helpers import Context, IMAGE
 
 QCOM_IR3 = os.getenv("DEV", "").startswith("QCOM:IR3")
 
-@unittest.skipUnless(QCOM_IR3 and IMAGE, "run with DEV=QCOM:IR3 IMAGE=1")
+@unittest.skipUnless(QCOM_IR3 and IMAGE.value, "run with DEV=QCOM:IR3 IMAGE=1 or IMAGE=2")
 class TestQCOMImageConv(unittest.TestCase):
   @staticmethod
   def _conv(device, image, x, w, stride=1, padding=0, groups=1, dtype=np.float32):
@@ -20,13 +20,10 @@ class TestQCOMImageConv(unittest.TestCase):
     w = rng.standard_normal((cout, cin//groups, kernel, kernel), dtype=np.float32)
     ref = self._conv("CPU", 0, x, w, stride, padding, groups, dtype)
     buf = self._conv("QCOM:IR3", 0, x, w, stride, padding, groups, dtype)
-    img = self._conv("QCOM:IR3", 1, x, w, stride, padding, groups, dtype)
+    img = self._conv("QCOM:IR3", IMAGE.value, x, w, stride, padding, groups, dtype)
     atol, rtol = ((2e-2, 2e-2) if dtype == np.float16 else (2e-4, 2e-4))
     np.testing.assert_allclose(buf, ref, atol=atol, rtol=rtol)
     np.testing.assert_allclose(img, ref, atol=atol, rtol=rtol)
-    if os.getenv("QCOM_TEST_CL"):
-      cl = self._conv("CL", 0, x, w, stride, padding, groups, dtype)
-      np.testing.assert_allclose(cl, ref, atol=atol, rtol=rtol)
 
   def test_regular(self):
     for kernel in (1, 3, 5):
@@ -52,7 +49,7 @@ class TestQCOMImageConv(unittest.TestCase):
     x = np.arange(1*4*5*7, dtype=np.float32).reshape(1, 4, 5, 7)
     w = np.zeros((4, 1, 3, 3), dtype=np.float32)
     w[:, 0, 1, 1] = 1
-    out = self._conv("QCOM:IR3", 1, x, w, padding=1, groups=4)
+    out = self._conv("QCOM:IR3", IMAGE.value, x, w, padding=1, groups=4)
     np.testing.assert_array_equal(out, x)
 
 if __name__ == "__main__": unittest.main()

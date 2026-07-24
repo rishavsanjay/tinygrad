@@ -3,7 +3,7 @@ from collections import defaultdict
 from tinygrad.dtype import dtypes, AddrSpace, Invalid, DType
 from tinygrad.uop.ops import UOp, Ops, PatternMatcher, UPat, GroupOp, shape_to_shape_arg
 from tinygrad.uop.symbolic import uop_given_valid, parse_valid, invalid_gate
-from tinygrad.helpers import getenv, IMAGE, OSX, ceildiv, is_image_shape
+from tinygrad.helpers import getenv, IMAGE, OSX, ceildiv, is_image_shape, round_up
 from tinygrad.renderer import Renderer
 
 # ***** image load valid simplification *****
@@ -64,18 +64,18 @@ def image_valid_dims(base:DType, size:int, arch:str) -> list[tuple[int,int]]:
   if (ALIGN:=qcom_align or next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("IMAGE_PITCH_ALIGNMENT=")), 0)) == 0: return []
   MAXW, pxls = 16384, size // 4
   if base not in (dtypes.half, dtypes.float) or size % 4 or size > 4*MAXW*MAXW: return []
-  # QCOM descriptors directly reinterpret contiguous buffers, so every row must satisfy Mesa's linear-layout alignment.
-  if qcom_align and pxls % ALIGN: return []
   # height=1 images just need to abide by alignment requirements in bytes, not pixels!
-  if size % (ALIGN * 4) != 0: return [] if (base.itemsize * size) % (64 if OSX else ALIGN) != 0 or pxls > MAXW else [(1, pxls)]
-  return [(pxls//ALIGN//k, ALIGN*k) for k in range(ceildiv(pxls//ALIGN, MAXW), min(pxls//ALIGN, MAXW//ALIGN)+1) if (pxls//ALIGN)%k == 0]
+  if size % (ALIGN * 4) != 0: dims = [] if (base.itemsize * size) % (64 if OSX else ALIGN) != 0 or pxls > MAXW else [(1, pxls)]
+  else: dims = [(pxls//ALIGN//k, ALIGN*k) for k in range(ceildiv(pxls//ALIGN, MAXW), min(pxls//ALIGN, MAXW//ALIGN)+1) if (pxls//ALIGN)%k == 0]
+  # QCOM images alias the original buffer, so the linear row and four-row tail must fit the page-rounded KGSL allocation.
+  if qcom_align:
+    alloc_size = round_up(size * base.itemsize, 0x1000)
+    dims = [(h, w) for h,w in dims if w % ALIGN == 0 and w * 4 * base.itemsize * round_up(h, 4) <= alloc_size]
+  return dims
 
 def transform_to_image(ctx, buf:UOp, x:UOp) -> UOp|None:
-  shapes, ren, image_slots = ctx
+  shapes, ren = ctx
   if not IMAGE or ren.target.device not in {"QCOM", "CL", "PYTHON", "NULL"}: return None
-  # The optimizer records the operand whose float4 upcast selected the automatic image path. Do not opportunistically turn unrelated vector
-  # accesses into textures on A8xx; IMAGE=2 remains the explicit all-eligible/forced path.
-  if IMAGE == 1 and ren.target.device == "QCOM" and ren.target.arch.startswith("a8") and buf.arg.slot not in image_slots: return None
   valid, x = x.get_valid(), x.get_idx()
   # search for dims that drop the most valid statements
   best_drop, cands = -1, []

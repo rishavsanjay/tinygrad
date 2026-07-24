@@ -154,7 +154,7 @@ def __getattr__(nm):
           *["python3 src/freedreno/registers/gen_header.py --rnn src/freedreno/registers/ --xml " +
             f"src/freedreno/registers/adreno/{s}.xml c-defines > gen/{s}.xml.h" for s in ["a6xx", "adreno_pm4", "a6xx_enums", "a6xx_descriptors"]],
           *[f"python3 src/compiler/{s}_h.py > gen/{s.split('/')[-1]}.h" for s in ["nir/nir_opcodes", "nir/nir_builder_opcodes"]],
-          *[f"python3 src/compiler/nir/nir_{s}_h.py --out gen/nir_{s}.h 2>/dev/null || python3 src/compiler/nir/nir_{s}_h.py --outdir gen" for s in ["intrinsics", "intrinsics_indices"]]]), cwd=path, shell=True, check=True),
+          *[f"python3 src/compiler/nir/nir_{s}_h.py --out gen/nir_{s}.h" for s in ["intrinsics", "intrinsics_indices"]]]), cwd=path, shell=True, check=True),
   srcs="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-26.1.4/mesa-26.1.4.tar.gz",
   rules=[(r'\b__FD_DEPRECATED\b', ''), (r'\b_Pragma\s*\(.*?\)', '')],
   dll=f"'tinymesa_cpu' if DEV.renderer == 'LVP' else 'tinymesa', {tinymesa_path}, emsg='pip install tinymesa==26.1.4'",

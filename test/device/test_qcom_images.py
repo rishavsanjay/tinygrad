@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 from tinygrad.dtype import dtypes
-from tinygrad.codegen.late.coalese import image_valid_dims, transform_to_image
+from tinygrad.codegen.late.coalesce import image_valid_dims, transform_to_image
 from tinygrad.helpers import Context, Target
 from tinygrad.renderer import Renderer
 from tinygrad.uop.ops import UOp
@@ -22,11 +22,11 @@ def linear_image_roundtrip(dtype, values):
 class TestQCOMImageLayout(unittest.TestCase):
   def test_fp16_padding(self):
     layout = qcom_image_layout(dtypes.half, (7, 17, 4))
-    self.assertEqual((layout.row_pitch, layout.array_pitch, layout.pitch_alignment, layout.size), (256, 2048, 128, 1792))
+    self.assertEqual((layout.row_pitch, layout.array_pitch, layout.pitch_alignment, layout.size), (256, 2048, 128, 2048))
 
   def test_fp32_padding(self):
     layout = qcom_image_layout(dtypes.float, (3, 17, 4))
-    self.assertEqual((layout.row_pitch, layout.array_pitch, layout.pitch_alignment, layout.size), (512, 2048, 256, 1536))
+    self.assertEqual((layout.row_pitch, layout.array_pitch, layout.pitch_alignment, layout.size), (512, 2048, 256, 2048))
 
   def test_explicit_pitch(self):
     self.assertEqual(qcom_image_layout(dtypes.half, (5, 16, 4), 384).row_pitch, 384)
@@ -57,14 +57,11 @@ class TestQCOMImageLayout(unittest.TestCase):
     np.testing.assert_array_equal(read(2, 3), values[3, 2])
     for xy in ((-1, 0), (0, -1), (7, 0), (0, 5)): np.testing.assert_array_equal(read(*xy), np.zeros(4, dtype=np.float32))
 
-  def test_a8xx_automatic_uses_only_selected_slot(self):
+  def test_image_modes_transform_eligible_operands(self):
     ren = Renderer(Target(device="QCOM", arch="a830,QCOM_IMAGE_PITCH_ALIGNMENT=16"))
-    selected, other, idx = UOp.param(1, dtypes.float, (1024,)), UOp.param(2, dtypes.float, (1024,)), UOp.const(dtypes.index, 0)
-    with Context(IMAGE=1):
-      self.assertIsNotNone(transform_to_image(({}, ren, (1,)), selected, idx))
-      self.assertIsNone(transform_to_image(({}, ren, (1,)), other, idx))
-    # Forced mode continues to cover every eligible operand, including storage-image validation.
-    with Context(IMAGE=2): self.assertIsNotNone(transform_to_image(({}, ren, (1,)), other, idx))
+    buf, idx = UOp.param(1, dtypes.float, (1024,)), UOp.const(dtypes.int, 0)
+    for image in (1, 2):
+      with Context(IMAGE=image): self.assertIsNotNone(transform_to_image(({}, ren), buf, idx))
 
 class TestQCOMImageDescriptors(unittest.TestCase):
   addr = 0x12345678000
