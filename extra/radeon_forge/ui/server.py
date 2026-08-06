@@ -69,10 +69,17 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
   def do_POST(self):
     path = urlparse(self.path).path
     try:
+      body = self._body()
       if path == "/api/sessions": return self._json(self.engine.create_session().snapshot(), HTTPStatus.CREATED)
+      if path == "/api/recipes/import":
+        result = self.engine.optimization_tools.import_recipe({"path": str(body.get("path", ""))})
+        return self._json(result, HTTPStatus.CREATED)
+      if path == "/api/recipes/export":
+        result = self.engine.optimization_tools.export_recipe_file({"spec_id": str(body.get("spec_id", "")),
+          "candidate_id": body.get("candidate_id"), "output": str(body.get("output", ""))})
+        return self._json(result, HTTPStatus.CREATED)
       session, tail = self._session_route()
       if session is None: return self.send_error(404)
-      body = self._body()
       if tail == "messages":
         events = session.send(str(body.get("content", "")), int(body.get("max_tokens", 512)), float(body.get("temperature", 0.0)))
         return self._json({"events": [asdict(x) for x in events], "session": session.snapshot()})
@@ -85,7 +92,7 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
         event = session.reject_tool(str(body.get("reason", "Rejected by user")))
         return self._json({"event": asdict(event), "session": session.snapshot()})
       return self.send_error(404)
-    except (ValueError, RuntimeError) as exc: return self._json({"error": str(exc), "type": type(exc).__name__}, 400)
+    except (ValueError, RuntimeError, FileNotFoundError) as exc: return self._json({"error": str(exc), "type": type(exc).__name__}, 400)
     except Exception as exc: return self._json({"error": str(exc), "type": type(exc).__name__}, 500)
 
 
