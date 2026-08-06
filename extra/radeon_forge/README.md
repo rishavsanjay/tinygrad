@@ -76,16 +76,44 @@ Implemented:
 - target-specific HIP compilation backend;
 - executable JSON benchmark protocol;
 - kernel-family search-space representation;
-- seed family based on tinygrad's fused RMSNorm/multiply/FP8 implementation;
-- unit tests proving metadata extraction and that invalid fast candidates cannot win.
+- native gfx1100 assembly-GEMM family with valid alternate FMAC schedules and occupancy limits;
+- gfx1100 hardware workload adapter with a tinygrad numerical oracle;
+- fused RMSNorm/multiply/FP8 pattern family, gated as unverified on gfx1100;
+- deterministic local retrieval with file-and-line citations;
+- loopback-only OpenAI-compatible planner client with no remote fallback;
+- deny-by-default, scoped, expiring permission grants;
+- multi-turn proposal, revision, approval, authorization, completion, and failure state machine;
+- unit tests for metadata, hard gates, command protocol, permissions, local endpoint restrictions, retrieval, and multi-turn approval.
 
 Not yet claimed or implemented:
 
 - no W7900 performance result has been recorded;
 - the gfx950 Llama kernels are pattern references until individually compiled and validated on gfx1100;
 - no generated candidate is approved for deployment;
-- local planner-model serving and the interactive approval UI are still pending;
-- end-to-end private-agent evaluation is still pending.
+- no local planner model/runtime has yet been selected and benchmarked on the W7900;
+- the interactive terminal/web surface is still pending;
+- the frozen end-to-end private-agent task suite and held-out evaluation are still pending.
+
+## First gfx1100 hardware gate
+
+Review the candidate plan without running hardware:
+
+```bash
+python3 -m extra.radeon_forge.cli --root . --family rdna3-asm-matmul --n 1024 --dry-run
+```
+
+After reviewing the printed plan, explicitly approve the local benchmark:
+
+```bash
+python3 -m extra.radeon_forge.cli \
+  --root . \
+  --family rdna3-asm-matmul \
+  --n 1024 \
+  --budgets 3,10,30 \
+  --approve-benchmark
+```
+
+This family validates the Forge search, permission, oracle, and evidence path. It is not the final Track 2 submission metric.
 
 ## Benchmark executable protocol
 
