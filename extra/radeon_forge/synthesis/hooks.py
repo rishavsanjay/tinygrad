@@ -6,7 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .workspace import CandidateRecord, CandidateWorkspace, KernelSpec
+from .workspace import CandidateWorkspace, KernelSpec
 
 
 class HookLayer(str, Enum):
@@ -27,6 +27,114 @@ class HookMode(str, Enum):
   WRAP = "wrap"
 
 
+class ExecutionStage(str, Enum):
+  """Coarse states in one agent/inference execution.
+
+  Stage is deliberately orthogonal to HookLayer. A kernel or block replacement
+  can be valid for decode but harmful for prefill; a scheduler optimization may
+  only apply while resuming after a tool call; a KV optimization may only apply
+  while appending to a warm cache.
+  """
+  ANY = "any"
+  SESSION_START = "session_start"
+  PREFILL = "prefill"
+  FIRST_TOKEN = "first_token"
+  DECODE = "decode"
+  TOOL_EXECUTION = "tool_execution"
+  TOOL_RESUME = "tool_resume"
+  KV_APPEND = "kv_append"
+  SAMPLING = "sampling"
+  SESSION_END = "session_end"
+
+
+@dataclass(frozen=True)
+class ExecutionContext:
+  stage: ExecutionStage
+  batch_size: int = 1
+  prompt_tokens: int = 0
+  context_tokens: int = 0
+  generated_token_index: int = -1
+  prefix_reused_tokens: int = 0
+  tool_round: int = 0
+  warm: bool = False
+  attributes: Mapping[str, Any] = field(default_factory=dict)
+
+  @classmethod
+  def from_mapping(cls, value: Mapping[str, Any]) -> ExecutionContext:
+    raw = dict(value)
+    stage = ExecutionStage(str(raw.pop("stage")))
+    known = {key: raw.pop(key, default) for key, default in (
+      ("batch_size", 1), ("prompt_tokens", 0), ("context_tokens", 0), ("generated_token_index", -1),
+      ("prefix_reused_tokens", 0), ("tool_round", 0), ("warm", False))}
+    return cls(stage, int(known["batch_size"]), int(known["prompt_tokens"]), int(known["context_tokens"]),
+               int(known["generated_token_index"]), int(known["prefix_reused_tokens"]), int(known["tool_round"]),
+               bool(known["warm"]), raw)
+
+  def flattened(self) -> dict[str, Any]:
+    return {"stage": self.stage.value, "batch_size": self.batch_size, "prompt_tokens": self.prompt_tokens,
+            "context_tokens": self.context_tokens, "generated_token_index": self.generated_token_index,
+            "prefix_reused_tokens": self.prefix_reused_tokens, "tool_round": self.tool_round, "warm": self.warm,
+            "prefix_cache": "hit" if self.prefix_reused_tokens > 0 else "miss", **dict(self.attributes)}
+
+
+@dataclass(frozen=True)
+class StagePredicate:
+  stages: tuple[ExecutionStage, ...] = (ExecutionStage.ANY,)
+  min_context_tokens: int | None = None
+  max_context_tokens: int | None = None
+  min_prompt_tokens: int | None = None
+  max_prompt_tokens: int | None = None
+  min_generated_token_index: int | None = None
+  max_generated_token_index: int | None = None
+  batch_sizes: tuple[int, ...] = ()
+  prefix_cache: str = "any"  # any, hit, miss
+  warm: bool | None = None
+  conditions: Mapping[str, Any] = field(default_factory=dict)
+
+  @classmethod
+  def from_mapping(cls, value: Mapping[str, Any] | None) -> StagePredicate:
+    raw = dict(value or {})
+    stage_value = raw.pop("stages", raw.pop("stage", ["any"]))
+    if isinstance(stage_value, str): stage_value = [stage_value]
+    if not isinstance(stage_value, Sequence): raise ValueError("hook stages must be a string or array")
+    stages = tuple(ExecutionStage(str(x)) for x in stage_value)
+    batch_value = raw.pop("batch_sizes", raw.pop("batch_size", ()))
+    if isinstance(batch_value, int): batch_value = [batch_value]
+    if not isinstance(batch_value, Sequence): raise ValueError("hook batch_sizes must be an integer or array")
+    prefix_cache = str(raw.pop("prefix_cache", "any"))
+    if prefix_cache not in {"any", "hit", "miss"}: raise ValueError("prefix_cache must be any, hit, or miss")
+    warm = raw.pop("warm", None)
+    if warm is not None and not isinstance(warm, bool): raise ValueError("warm must be boolean")
+    fields = {}
+    for name in ("min_context_tokens", "max_context_tokens", "min_prompt_tokens", "max_prompt_tokens",
+                 "min_generated_token_index", "max_generated_token_index"):
+      item = raw.pop(name, None)
+      fields[name] = None if item is None else int(item)
+    explicit_conditions = raw.pop("conditions", {})
+    if not isinstance(explicit_conditions, Mapping): raise ValueError("hook conditions must be a table")
+    conditions = {**raw, **dict(explicit_conditions)}
+    return cls(stages, **fields, batch_sizes=tuple(int(x) for x in batch_value), prefix_cache=prefix_cache, warm=warm,
+               conditions=conditions)
+
+  @property
+  def signature(self) -> str:
+    return hashlib.sha256(json.dumps(asdict(self), sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+  def matches(self, context: ExecutionContext) -> bool:
+    if ExecutionStage.ANY not in self.stages and context.stage not in self.stages: return False
+    if self.min_context_tokens is not None and context.context_tokens < self.min_context_tokens: return False
+    if self.max_context_tokens is not None and context.context_tokens > self.max_context_tokens: return False
+    if self.min_prompt_tokens is not None and context.prompt_tokens < self.min_prompt_tokens: return False
+    if self.max_prompt_tokens is not None and context.prompt_tokens > self.max_prompt_tokens: return False
+    if self.min_generated_token_index is not None and context.generated_token_index < self.min_generated_token_index: return False
+    if self.max_generated_token_index is not None and context.generated_token_index > self.max_generated_token_index: return False
+    if self.batch_sizes and context.batch_size not in self.batch_sizes: return False
+    if self.prefix_cache != "any" and context.flattened()["prefix_cache"] != self.prefix_cache: return False
+    if self.warm is not None and context.warm is not self.warm: return False
+    flat = context.flattened()
+    return all(_matches(expected, flat.get(str(key))) for key, expected in self.conditions.items())
+
+
 @dataclass(frozen=True)
 class HookDescriptor:
   layer: HookLayer
@@ -34,6 +142,7 @@ class HookDescriptor:
   mode: HookMode = HookMode.REPLACE
   adapter: str = "request_metadata"
   selector: Mapping[str, Any] = field(default_factory=dict)
+  when: StagePredicate = field(default_factory=StagePredicate)
   priority: int = 0
   exclusive_group: str = ""
   description: str = ""
@@ -47,9 +156,14 @@ class HookDescriptor:
     if not target: raise ValueError("hook target must not be empty")
     selector = raw.get("selector", {})
     if not isinstance(selector, Mapping): raise ValueError("hook selector must be a table")
+    when_value = raw.get("when", {key: raw[key] for key in ("stage", "stages") if key in raw})
+    predicate = StagePredicate.from_mapping(when_value if isinstance(when_value, Mapping) else {"stages": when_value})
     group = str(raw.get("exclusive_group", f"{layer.value}:{target}"))
     return cls(layer, target, HookMode(str(raw.get("mode", "replace"))), str(raw.get("adapter", "request_metadata")),
-               dict(selector), int(raw.get("priority", 0)), group, str(raw.get("description", "")))
+               dict(selector), predicate, int(raw.get("priority", 0)), group, str(raw.get("description", "")))
+
+  @property
+  def slot_key(self) -> str: return f"{self.exclusive_group}:{self.when.signature}"
 
 
 @dataclass(frozen=True)
@@ -131,13 +245,15 @@ class ActiveHook:
 class HookActivationError(RuntimeError): pass
 
 
-class HookRegistry:
-  """Persistent, rollback-safe deployment registry for validated optimizations.
+def _descriptor_from_dict(desc: Mapping[str, Any]) -> HookDescriptor:
+  when = desc.get("when", {})
+  return HookDescriptor(HookLayer(desc["layer"]), str(desc["target"]), HookMode(desc["mode"]), str(desc["adapter"]),
+                        dict(desc.get("selector", {})), StagePredicate.from_mapping(when), int(desc.get("priority", 0)),
+                        str(desc.get("exclusive_group", "")), str(desc.get("description", "")))
 
-  The registry selects implementations; the isolated inference backend owns the
-  actual adapter. Unsupported adapters cannot be activated merely because a
-  candidate benchmarked successfully.
-  """
+
+class HookRegistry:
+  """Persistent, rollback-safe, execution-state-aware optimization registry."""
   SUPPORTED_ADAPTERS = frozenset({"request_metadata", "python_transformer_block"})
 
   def __init__(self, workspace: CandidateWorkspace):
@@ -154,12 +270,10 @@ class HookRegistry:
     ret = []
     for item in payload:
       try:
-        desc = item["descriptor"]
         comp = item["compatibility"]
         ret.append(ActiveHook(item["activation_id"], item["candidate_id"], item["spec_id"], item["source_path"],
-                              item["source_sha256"], HookDescriptor(HookLayer(desc["layer"]), desc["target"], HookMode(desc["mode"]),
-                              desc["adapter"], desc.get("selector", {}), int(desc.get("priority", 0)), desc.get("exclusive_group", ""),
-                              desc.get("description", "")), CompatibilityReport(bool(comp["compatible"]), tuple(comp.get("exact", ())),
+                              item["source_sha256"], _descriptor_from_dict(item["descriptor"]),
+                              CompatibilityReport(bool(comp["compatible"]), tuple(comp.get("exact", ())),
                               tuple(comp.get("unknown", ())), tuple(comp.get("mismatches", ()))), float(item["activated_at_s"]),
                               item["reason"], item.get("previous_activation_id")))
       except Exception: continue
@@ -176,6 +290,16 @@ class HookRegistry:
 
   def active(self) -> list[ActiveHook]:
     with self._lock: return sorted(self._load_active(), key=lambda x: (-x.descriptor.priority, x.activated_at_s))
+
+  def resolve(self, context: ExecutionContext) -> list[ActiveHook]:
+    """Select the highest-priority matching implementation per logical hook group."""
+    selected: dict[str, ActiveHook] = {}
+    for hook in self.active():
+      if not hook.descriptor.when.matches(context): continue
+      group = hook.descriptor.exclusive_group
+      current = selected.get(group)
+      if current is None or hook.descriptor.priority > current.descriptor.priority: selected[group] = hook
+    return sorted(selected.values(), key=lambda x: (-x.descriptor.priority, x.activated_at_s))
 
   def _required_status(self, spec: KernelSpec) -> frozenset[str]:
     heldout = spec.metadata.get("heldout_command", ())
@@ -197,8 +321,8 @@ class HookRegistry:
       compatibility = check_compatibility(spec, fingerprint)
       if not compatibility.compatible: raise HookActivationError("incompatible runtime: " + "; ".join(compatibility.mismatches))
       current = self._load_active()
-      previous = next((x for x in current if x.descriptor.exclusive_group == descriptor.exclusive_group), None)
-      current = [x for x in current if x.descriptor.exclusive_group != descriptor.exclusive_group]
+      previous = next((x for x in current if x.descriptor.slot_key == descriptor.slot_key), None)
+      current = [x for x in current if x.descriptor.slot_key != descriptor.slot_key]
       active = ActiveHook(uuid.uuid4().hex, candidate.candidate_id, spec.spec_id, candidate.source_path, source_sha, descriptor,
                           compatibility, time.time(), reason.strip(), previous.activation_id if previous else None)
       current.append(active)
@@ -223,12 +347,15 @@ class HookRegistry:
       self._history("hooks_cleared", activations=[asdict(x) for x in current], reason=reason.strip())
       return current
 
-  def runtime_metadata(self) -> dict[str, Any]:
-    hooks = []
-    for active in self.active():
-      source = Path(active.source_path)
-      if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != active.source_sha256: continue
-      hooks.append({"activation_id": active.activation_id, "candidate_id": active.candidate_id, "spec_id": active.spec_id,
-                    "source_path": active.source_path, "source_sha256": active.source_sha256,
-                    "descriptor": asdict(active.descriptor)})
-    return {"active_hooks": hooks}
+  @staticmethod
+  def _runtime_item(active: ActiveHook) -> dict[str, Any] | None:
+    source = Path(active.source_path)
+    if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != active.source_sha256: return None
+    return {"activation_id": active.activation_id, "candidate_id": active.candidate_id, "spec_id": active.spec_id,
+            "source_path": active.source_path, "source_sha256": active.source_sha256,
+            "descriptor": asdict(active.descriptor)}
+
+  def runtime_metadata(self, context: ExecutionContext | None = None) -> dict[str, Any]:
+    source = self.resolve(context) if context is not None else self.active()
+    hooks = [item for active in source if (item := self._runtime_item(active)) is not None]
+    return {"active_hooks": hooks, "execution_context": asdict(context) if context is not None else None}
