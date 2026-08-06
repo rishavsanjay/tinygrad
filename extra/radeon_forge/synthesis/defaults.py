@@ -15,7 +15,10 @@ def install_default_specs(workspace: CandidateWorkspace) -> list[KernelSpec]:
                   "No out-of-workspace file access", "MockGPU timing is never used as a speed metric"),
       objective="minimize median and P95 W7900 latency without correctness loss",
       mockgpu_command=("python3", "{candidate}"), hardware_command=("python3", "{candidate}"),
-      metadata={"seed":"extra/gemm/amd_asm_matmul.py", "role":"infrastructure and schedule-synthesis gate"},
+      metadata={"seed":"extra/gemm/amd_asm_matmul.py", "role":"infrastructure and schedule-synthesis gate",
+                "hook":{"layer":"kernel", "target":"batch1_projection_gemm", "mode":"replace", "adapter":"request_metadata",
+                        "selector":{"program_name":"generated_gemm"}, "exclusive_group":"projection_gemm",
+                        "description":"Validated kernel selection forwarded to a backend-specific kernel adapter."}},
     ),
     KernelSpec(
       name="batch1-decode-megakernel",
@@ -26,7 +29,11 @@ def install_default_specs(workspace: CandidateWorkspace) -> list[KernelSpec]:
       invariants=("Match the trusted tinygrad block reference", "Preserve KV-cache semantics", "No spills unless explicitly allowed",
                   "Generated code is disposable; specification and oracle are authoritative"),
       objective="minimize inter-token latency and kernel launches/token",
-      metadata={"status":"oracle command must be bound after selecting the model", "role":"final technical target"},
+      metadata={"status":"oracle command must be bound after selecting the model", "role":"final technical target",
+                "hook":{"layer":"transformer_block", "target":"llama.decode.block", "mode":"replace",
+                        "adapter":"python_transformer_block", "selector":{"indices":"all", "phase":"decode"},
+                        "exclusive_group":"decode_transformer_block",
+                        "description":"Replace selected tinygrad Llama blocks inside the isolated model process."}},
     ),
   ]
   existing = {x.spec_id for x in workspace.specs()}
