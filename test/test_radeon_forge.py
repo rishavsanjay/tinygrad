@@ -1,11 +1,15 @@
+import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from extra.radeon_forge.amd_metadata import resource_report_from_comgr, resource_report_from_text
+from extra.radeon_forge.command_backend import CommandHarness
 from extra.radeon_forge.contracts import Candidate, CorrectnessReport, ResourceReport, TrialResult, WorkloadContract
 from extra.radeon_forge.families import rdna3_rmsnorm_fp8_family
 from extra.radeon_forge.ledger import ExperimentLedger
+from extra.radeon_forge.permissions import Action, PermissionController, PermissionDenied
 from extra.radeon_forge.tuner import successive_halving
 
 
@@ -54,6 +58,31 @@ class TestRadeonForge(unittest.TestCase):
       self.assertIsNotNone(summary.winner)
       self.assertEqual(summary.winner.candidate.candidate_id, "good")
       self.assertTrue(any(record["event"] == "winner_selected" for record in ledger.records()))
+
+  def test_permissions_are_scoped_and_single_use(self):
+    controller = PermissionController()
+    with self.assertRaises(PermissionDenied): controller.authorize(None, Action.BENCHMARK)
+    grant = controller.issue([Action.BENCHMARK], "run two short hardware trials", max_uses=1)
+    self.assertEqual(controller.authorize(grant.token, Action.BENCHMARK).reason, grant.reason)
+    with self.assertRaises(PermissionDenied): controller.authorize(grant.token, Action.BENCHMARK)
+    deploy_grant = controller.issue([Action.BENCHMARK], "benchmark only")
+    with self.assertRaises(PermissionDenied): controller.authorize(deploy_grant.token, Action.DEPLOY)
+
+  def test_command_harness_json_protocol(self):
+    candidate = Candidate("candidate", "unit", {"THREADS": 128})
+    with tempfile.TemporaryDirectory() as directory:
+      runner = Path(directory) / "runner.py"
+      payload = {
+        "samples_us": [3.0, 2.0, 4.0],
+        "correctness": {"passed": True, "checked_values": 16},
+        "resources": {"vgprs": 32, "spilled_vgprs": 0, "spilled_sgprs": 0},
+      }
+      runner.write_text(f"import json\nprint(json.dumps({json.dumps(payload)}))\n", encoding="utf-8")
+      result = CommandHarness([sys.executable, str(runner)])(candidate, 3)
+      self.assertTrue(result.correctness.passed)
+      self.assertEqual(result.median_latency_us, 3.0)
+      self.assertEqual(result.p95_latency_us, 4.0)
+      self.assertEqual(result.resources.vgprs, 32)
 
 
 if __name__ == "__main__": unittest.main()
