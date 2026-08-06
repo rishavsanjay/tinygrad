@@ -13,6 +13,9 @@ class BackendCapabilities:
   persistent_kv: bool = False
   kernel_metrics: bool = False
   cancellation: bool = False
+  batched_prefill: bool = False
+  stage_hooks: bool = False
+  local_only: bool = True
 
 
 @dataclass(frozen=True)
