@@ -11,6 +11,7 @@ from ..synthesis import CandidateWorkspace, OptimizationTools, RuntimeFingerprin
 from .backend import GenerationEvent, GenerationRequest, InferenceBackend
 from .jobs import LocalJobManager
 from .session import AgentSession
+from .tool_prompt import inject_tool_instruction
 from .tools import ToolCall, ToolRegistry, WorkspaceTools
 
 
@@ -54,8 +55,9 @@ class ForgeEngine:
   def stream_inference(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]] = (),
                        max_tokens: int = 256, temperature: float = 0.0, session_id: str | None = None,
                        stop: Sequence[str] = ()) -> Iterator[GenerationEvent]:
-    """Serve the resident local model without losing Forge hooks or profiling events."""
-    request = GenerationRequest(session_id or uuid.uuid4().hex, tuple(messages), tuple(tools), max_tokens, temperature,
+    """Serve the resident local model without losing Forge hooks, tools or profiling events."""
+    rendered_messages = inject_tool_instruction(messages, tools)
+    request = GenerationRequest(session_id or uuid.uuid4().hex, tuple(rendered_messages), tuple(tools), max_tokens, temperature,
                                 tuple(stop), metadata=self.inference_metadata())
     return self.backend.stream(request)
 
