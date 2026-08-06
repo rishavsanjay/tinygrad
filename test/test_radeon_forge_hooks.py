@@ -4,8 +4,9 @@ import unittest
 from pathlib import Path
 
 from extra.radeon_forge.backends.stage_hooks import ModelStageHookRuntime
-from extra.radeon_forge.synthesis.hooks import (ExecutionContext, ExecutionStage, HookRegistry, RuntimeFingerprint,
-                                                StagePredicate)
+from extra.radeon_forge.synthesis import SafeHookRegistry
+from extra.radeon_forge.synthesis.hooks import (ExecutionContext, ExecutionStage, HookActivationError, HookRegistry,
+                                                RuntimeFingerprint, StagePredicate)
 from extra.radeon_forge.synthesis.workspace import CandidateWorkspace, KernelSpec
 
 
@@ -32,7 +33,7 @@ class TestStageAwareHooks(unittest.TestCase):
                                                          generated_token_index=0, prefix_reused_tokens=256,
                                                          attributes={"resume_after_tool": True})))
 
-  def test_prefill_and_decode_implementations_can_coexist(self):
+  def test_prefill_and_decode_implementations_can_coexist_in_generic_resolver(self):
     with tempfile.TemporaryDirectory() as directory:
       workspace = CandidateWorkspace(directory)
       common = {"layer": "transformer_block", "target": "llama.block", "adapter": "python_transformer_block",
@@ -55,6 +56,43 @@ class TestStageAwareHooks(unittest.TestCase):
       self.assertEqual(registry.resolve(ExecutionContext(ExecutionStage.FIRST_TOKEN, generated_token_index=0)), [])
       self.assertEqual(registry.resolve(ExecutionContext(ExecutionStage.DECODE, generated_token_index=2))[0].candidate_id,
                        decode.candidate_id)
+
+  def test_engine_registry_rejects_unimplemented_metadata_adapter(self):
+    with tempfile.TemporaryDirectory() as directory:
+      workspace = CandidateWorkspace(directory)
+      spec = workspace.save_spec(KernelSpec("advisory-kernel", "kernel idea", target="gfx1100",
+        invariants=("match reference",), metadata={"hook":{"layer":"kernel", "target":"gemv",
+          "adapter":"request_metadata", "when":{"stages":["decode"]}}}))
+      candidate = workspace.create_candidate(spec.spec_id, "# advisory only\n", "prior kernel schedule")
+      workspace.update(candidate.candidate_id, "hardware_passed", {})
+      registry = SafeHookRegistry(workspace)
+      with self.assertRaisesRegex(HookActivationError, "not executable"):
+        registry.activate(candidate.candidate_id, RuntimeFingerprint(architecture="gfx1100"), "deploy")
+
+  def test_stateful_hook_requires_phase_transition_oracle(self):
+    with tempfile.TemporaryDirectory() as directory:
+      workspace = CandidateWorkspace(directory)
+      hook = {"layer":"transformer_block", "target":"llama.block", "adapter":"python_transformer_block",
+              "when":{"stages":["decode"]}}
+      no_transition = workspace.save_spec(KernelSpec("no-transition", "decode block", target="gfx1100",
+        invariants=("preserve KV state",), metadata={"hook":hook}))
+      first = workspace.create_candidate(no_transition.spec_id, "def build_replacement(*args): return args[0]\n", "decode")
+      workspace.update(first.candidate_id, "hardware_passed", {})
+      registry = SafeHookRegistry(workspace)
+      fingerprint = RuntimeFingerprint(architecture="gfx1100", runtime="tinygrad", model_family="llama")
+      with self.assertRaisesRegex(HookActivationError, "phase-transition oracle"):
+        registry.activate(first.candidate_id, fingerprint, "deploy")
+
+      with_transition = workspace.save_spec(KernelSpec("with-transition", "decode block", target="gfx1100",
+        invariants=("preserve KV state",), metadata={"hook":hook,
+          "heldout_command":["python3", "validate_prefill_decode_transition.py"]}))
+      second = workspace.create_candidate(with_transition.spec_id, "def build_replacement(*args): return args[0]\n", "decode")
+      workspace.update(second.candidate_id, "hardware_passed", {})
+      with self.assertRaisesRegex(HookActivationError, "has not passed"):
+        registry.activate(second.candidate_id, fingerprint, "deploy")
+      workspace.update(second.candidate_id, "heldout_passed", {"heldout":{"transition":"prefill->first_token->decode"}})
+      active = registry.activate(second.candidate_id, fingerprint, "transition oracle passed")
+      self.assertEqual(active.candidate_id, second.candidate_id)
 
   def test_model_adapter_rolls_back_bad_stage_hook(self):
     with tempfile.TemporaryDirectory() as directory:
