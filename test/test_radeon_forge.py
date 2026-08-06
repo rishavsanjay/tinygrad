@@ -7,9 +7,11 @@ from pathlib import Path
 from extra.radeon_forge.amd_metadata import resource_report_from_comgr, resource_report_from_text
 from extra.radeon_forge.command_backend import CommandHarness
 from extra.radeon_forge.contracts import Candidate, CorrectnessReport, ResourceReport, TrialResult, WorkloadContract
-from extra.radeon_forge.families import rdna3_rmsnorm_fp8_family
+from extra.radeon_forge.families import rdna3_asm_matmul_family, rdna3_rmsnorm_fp8_family
+from extra.radeon_forge.knowledge import LocalKnowledgeBase
 from extra.radeon_forge.ledger import ExperimentLedger
 from extra.radeon_forge.permissions import Action, PermissionController, PermissionDenied
+from extra.radeon_forge.planner import LocalEndpointRequired, validate_local_endpoint
 from extra.radeon_forge.tuner import successive_halving
 
 
@@ -34,12 +36,14 @@ class TestRadeonForge(unittest.TestCase):
     self.assertEqual((report.vgprs, report.sgprs, report.lds_bytes), (44, 20, 4096))
     self.assertFalse(report.has_spills)
 
-  def test_family_grid(self):
-    family = rdna3_rmsnorm_fp8_family("/tmp/tinygrad", 4096 * 16, 4096)
-    candidates = family.candidates()
-    self.assertEqual(len(candidates), 12)
-    self.assertEqual(len({candidate.candidate_id for candidate in candidates}), 12)
-    self.assertTrue(all(candidate.parameters["HIDDEN"] == 4096 for candidate in candidates))
+  def test_family_grids(self):
+    rmsnorm = rdna3_rmsnorm_fp8_family("/tmp/tinygrad", 4096 * 16, 4096).candidates()
+    self.assertEqual(len(rmsnorm), 12)
+    self.assertEqual(len({candidate.candidate_id for candidate in rmsnorm}), 12)
+    self.assertTrue(all(candidate.parameters["HIDDEN"] == 4096 for candidate in rmsnorm))
+    matmul = rdna3_asm_matmul_family("/tmp/tinygrad", 1024).candidates()
+    self.assertEqual(len(matmul), 12)
+    self.assertEqual({candidate.parameters["FMAC_ORDER"] for candidate in matmul}, {"optimized", "row_major", "column_major", "snake"})
 
   def test_hard_gate_beats_fast_invalid_candidate(self):
     candidates = [Candidate("bad", "test", {}), Candidate("good", "test", {})]
@@ -83,6 +87,22 @@ class TestRadeonForge(unittest.TestCase):
       self.assertEqual(result.median_latency_us, 3.0)
       self.assertEqual(result.p95_latency_us, 4.0)
       self.assertEqual(result.resources.vgprs, 32)
+
+  def test_planner_rejects_remote_endpoints(self):
+    self.assertEqual(validate_local_endpoint("http://127.0.0.1:8000/v1"), "http://127.0.0.1:8000/v1")
+    self.assertEqual(validate_local_endpoint("http://[::1]:8000/v1"), "http://[::1]:8000/v1")
+    with self.assertRaises(LocalEndpointRequired): validate_local_endpoint("https://api.example.com/v1")
+    with self.assertRaises(LocalEndpointRequired): validate_local_endpoint("http://192.168.1.5:8000/v1")
+
+  def test_local_knowledge_retrieval_has_citations(self):
+    with tempfile.TemporaryDirectory() as directory:
+      path = Path(directory) / "knowledge.md"
+      path.write_text("RDNA3 uses VOPD scheduling.\nSpilled VGPRs are rejected.\nRMSNorm can remove HBM materialization.\n", encoding="utf-8")
+      knowledge = LocalKnowledgeBase.from_paths([path], lines_per_chunk=2, overlap=1)
+      hits = knowledge.search("VGPR spills", top_k=2)
+      self.assertTrue(hits)
+      self.assertIn(str(path), hits[0].citation)
+      self.assertIn("VGPR", hits[0].chunk.text)
 
 
 if __name__ == "__main__": unittest.main()
