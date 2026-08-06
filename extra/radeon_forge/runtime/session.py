@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading, time, uuid
+import json, threading, time, uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Callable, Mapping
@@ -39,6 +39,7 @@ class AgentSession:
     self.messages: list[dict[str, Any]] = [{"role": "system", "content": self._system_prompt()}]
     self.events: list[SessionEvent] = []
     self.pending_tool_call: ToolCall | None = None
+    self.pending_assistant_content = ""
     self.partial_output = ""
     self.state = SessionState.IDLE
     self._sequence = 0
@@ -54,6 +55,11 @@ Tool protocol: when a tool is required, output exactly one object wrapped as
 and no surrounding prose. Tool execution always requires user approval. Never
 claim a tool result before it is returned. All inference and tools are local.
 """
+
+  @staticmethod
+  def _tool_content(call: ToolCall) -> str:
+    payload = {"id": call.call_id, "name": call.name, "arguments": dict(call.arguments)}
+    return f"<tool_call>{json.dumps(payload, separators=(',', ':'))}</tool_call>"
 
   def _emit(self, kind: str, **data: Any) -> SessionEvent:
     self._sequence += 1
@@ -96,6 +102,7 @@ claim a tool result before it is returned. All inference and tools are local.
   def _generate(self, max_tokens: int, temperature: float) -> tuple[SessionEvent, ...]:
     self.state = SessionState.GENERATING
     self.partial_output = ""
+    self.pending_assistant_content = ""
     started_at = len(self.events)
     pieces: list[str] = []
     step = sum(1 for event in self.events if event.kind == "generation_started") + 1
@@ -116,7 +123,13 @@ claim a tool result before it is returned. All inference and tools are local.
                                 text=event.text, **token_metrics)
           elif event.kind in {"prefill", "decode", "kernel", "metric", "hook"}: self._record_backend_event(event, parent.event_id)
           elif event.kind == "tool_call" and event.tool_call is not None:
-            self.pending_tool_call = ToolCall(str(event.tool_call.get("id") or uuid.uuid4().hex), str(event.tool_call["name"]), event.tool_call.get("arguments", {}))
+            arguments = event.tool_call.get("arguments", {})
+            if not isinstance(arguments, Mapping): raise ValueError("backend tool-call arguments must be an object")
+            self.pending_tool_call = ToolCall(str(event.tool_call.get("id") or uuid.uuid4().hex),
+                                              str(event.tool_call["name"]), dict(arguments))
+            raw = event.tool_call.get("raw")
+            if isinstance(raw, str): self.pending_assistant_content = raw
+            self._emit("structured_tool_call", call=asdict(self.pending_tool_call), native=True)
           elif event.kind == "done": self._emit("generation_done", finish_reason=event.finish_reason, metrics=dict(event.metrics))
       except Exception as exc:
         self.state = SessionState.FAILED
@@ -124,9 +137,12 @@ claim a tool result before it is returned. All inference and tools are local.
         raise
     output = "".join(pieces)
     if self.pending_tool_call is None:
-      try: self.pending_tool_call = parse_tool_call(output)
+      try:
+        self.pending_tool_call = parse_tool_call(output)
+        if self.pending_tool_call is not None: self.pending_assistant_content = output
       except Exception as exc: self._emit("tool_parse_error", error=str(exc), raw=output)
     if self.pending_tool_call is not None:
+      if not self.pending_assistant_content: self.pending_assistant_content = self._tool_content(self.pending_tool_call)
       self.partial_output = ""
       self.state = SessionState.AWAITING_TOOL_APPROVAL
       self._emit("tool_approval_required", call=asdict(self.pending_tool_call), action=self.tools.spec(self.pending_tool_call.name).action.value)
@@ -141,6 +157,7 @@ claim a tool result before it is returned. All inference and tools are local.
     with self._lock:
       if self.state is not SessionState.AWAITING_TOOL_APPROVAL or self.pending_tool_call is None: raise RuntimeError("no tool call awaits approval")
       call = self.pending_tool_call
+      assistant_content = self.pending_assistant_content or self._tool_content(call)
       started_at = len(self.events)
       self.state = SessionState.RUNNING_TOOL
       try:
@@ -153,9 +170,10 @@ claim a tool result before it is returned. All inference and tools are local.
         self._emit("tool_authorization_failed", call_id=call.call_id, error=str(exc), error_type=type(exc).__name__)
         raise
       self._emit("tool_result", result=asdict(result))
-      self.messages.append({"role": "assistant", "content": f"<tool_call>{{\"name\":\"{call.name}\"}}</tool_call>"})
+      self.messages.append({"role": "assistant", "content": assistant_content})
       self.messages.append({"role": "tool", "name": call.name, "tool_call_id": call.call_id, "content": str(result.output)})
       self.pending_tool_call = None
+      self.pending_assistant_content = ""
       if not result.ok:
         self.state = SessionState.FAILED
         return tuple(self.events[started_at:])
@@ -167,8 +185,11 @@ claim a tool result before it is returned. All inference and tools are local.
     with self._lock:
       if self.pending_tool_call is None: raise RuntimeError("no pending tool call")
       call = self.pending_tool_call
-      self.pending_tool_call = None
+      assistant_content = self.pending_assistant_content or self._tool_content(call)
+      self.messages.append({"role": "assistant", "content": assistant_content})
       self.messages.append({"role": "tool", "name": call.name, "tool_call_id": call.call_id, "content": f"User rejected tool call: {reason}"})
+      self.pending_tool_call = None
+      self.pending_assistant_content = ""
       self.state = SessionState.IDLE
       return self._emit("tool_rejected", call_id=call.call_id, reason=reason)
 
@@ -178,4 +199,5 @@ claim a tool result before it is returned. All inference and tools are local.
   def snapshot(self) -> dict[str, Any]:
     return {"session_id": self.session_id, "state": self.state.value, "messages": list(self.messages),
             "events": [asdict(x) for x in self.events], "pending_tool_call": asdict(self.pending_tool_call) if self.pending_tool_call else None,
-            "partial_output": self.partial_output, "trace_id": self.trace.trace_id}
+            "pending_assistant_content": self.pending_assistant_content, "partial_output": self.partial_output,
+            "trace_id": self.trace.trace_id}
