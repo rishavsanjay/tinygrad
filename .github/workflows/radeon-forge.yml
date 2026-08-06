@@ -1,0 +1,35 @@
+name: Radeon Forge
+
+on:
+  push:
+    branches: [radeon-forge]
+    paths:
+      - "extra/radeon_forge/**"
+      - "test/test_radeon_forge*.py"
+      - ".github/workflows/radeon-forge.yml"
+  pull_request:
+    paths:
+      - "extra/radeon_forge/**"
+      - "test/test_radeon_forge*.py"
+
+permissions:
+  contents: read
+
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile Radeon Forge
+        run: python -m compileall -q extra/radeon_forge test/test_radeon_forge*.py
+      - name: Run isolated Forge tests
+        run: >-
+          python -m unittest -v
+          test.test_radeon_forge
+          test.test_radeon_forge_recipe
+          test.test_radeon_forge_runtime
+          test.test_radeon_forge_hooks
