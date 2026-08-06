@@ -38,7 +38,15 @@ class TraceRecorder:
     self._lock = threading.RLock()
 
   def point(self, kind: str, name: str, parent_id: str | None = None, **attributes: Any) -> TraceEvent:
-    ev = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, name, now_ns(), now_ns(), parent_id, attributes)
+    ts = now_ns()
+    ev = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, name, ts, ts, parent_id, attributes)
+    with self._lock: self._events.append(ev)
+    return ev
+
+  def duration(self, kind: str, name: str, duration_ms: float, parent_id: str | None = None, **attributes: Any) -> TraceEvent:
+    end = now_ns()
+    start = end - max(0, int(float(duration_ms) * 1e6))
+    ev = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, name, start, end, parent_id, attributes)
     with self._lock: self._events.append(ev)
     return ev
 
