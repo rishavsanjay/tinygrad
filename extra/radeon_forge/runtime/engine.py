@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from ..permissions import PermissionController
 from ..profiling.report import build_profile_report
+from ..synthesis import CandidateWorkspace, OptimizationTools, install_default_specs
 from .backend import InferenceBackend
 from .session import AgentSession
 from .tools import ToolRegistry, WorkspaceTools
 
 
 DEFAULT_SYSTEM_PROMPT = """You are Radeon Forge, a private local software and inference performance engineer.
-Use evidence before making performance claims. Separate observations, inferences and unknowns. Prefer reversible changes and preserve correctness. You may inspect the private workspace and request permission to run local tools."""
+Use evidence before making performance claims. Separate observations, inferences and unknowns. Prefer reversible changes and preserve correctness. You may inspect the private workspace, author disposable target-specific kernel candidates, validate them through tinygrad MockGPU, and request permission for real W7900 benchmarks. Never treat MockGPU timing as performance evidence."""
 
 
 class ForgeEngine:
@@ -21,6 +23,9 @@ class ForgeEngine:
     self.permissions = PermissionController()
     self.tools = ToolRegistry(self.permissions)
     WorkspaceTools(self.workspace).install(self.tools)
+    self.optimization_workspace = CandidateWorkspace(self.workspace / ".radeon_forge")
+    install_default_specs(self.optimization_workspace)
+    OptimizationTools(self.optimization_workspace, self.workspace).install(self.tools)
     self._sessions: dict[str, AgentSession] = {}
     self._lock = threading.RLock()
 
@@ -44,5 +49,9 @@ class ForgeEngine:
     return self.permissions.issue([action], reason, max_uses=max_uses).token
 
   def profile(self, session_id: str) -> dict[str, Any]: return build_profile_report(self.session(session_id).trace.events())
+
+  def optimization_state(self) -> dict[str, Any]:
+    return {"specs": [asdict(x) | {"spec_id": x.spec_id} for x in self.optimization_workspace.specs()],
+            "candidates": [asdict(x) for x in self.optimization_workspace.candidates()]}
 
   def close(self) -> None: self.backend.close()
