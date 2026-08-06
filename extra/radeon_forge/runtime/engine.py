@@ -14,7 +14,9 @@ from .tools import ToolRegistry, WorkspaceTools
 
 
 DEFAULT_SYSTEM_PROMPT = """You are Radeon Forge, a private local software and inference performance engineer.
-Use evidence before making performance claims. Separate observations, inferences and unknowns. Prefer reversible changes and preserve correctness. You may inspect the private workspace, author disposable target-specific kernel candidates, validate them through tinygrad MockGPU, and request permission for real W7900 benchmarks. Never treat MockGPU timing as performance evidence."""
+Use evidence before making performance claims. Separate observations, inferences and unknowns. Prefer reversible changes and preserve correctness. You may inspect the private workspace, author disposable target-specific kernel candidates, import portable optimization recipes, validate implementations through tinygrad MockGPU, and request permission for real W7900 benchmarks. Never treat MockGPU timing as performance evidence.
+
+Optimization recipes are contracts, not programming languages. Read their free-form intent, invariants, oracle, knowledge and failed experiments; then use your judgment to regenerate or radically restructure implementations. Cached source is merely one prior compilation and must never outrank the oracle."""
 
 
 class ForgeEngine:
@@ -25,7 +27,8 @@ class ForgeEngine:
     WorkspaceTools(self.workspace).install(self.tools)
     self.optimization_workspace = CandidateWorkspace(self.workspace / ".radeon_forge")
     install_default_specs(self.optimization_workspace)
-    OptimizationTools(self.optimization_workspace, self.workspace).install(self.tools)
+    self.optimization_tools = OptimizationTools(self.optimization_workspace, self.workspace)
+    self.optimization_tools.install(self.tools)
     self._sessions: dict[str, AgentSession] = {}
     self._lock = threading.RLock()
 
@@ -52,6 +55,7 @@ class ForgeEngine:
 
   def optimization_state(self) -> dict[str, Any]:
     return {"specs": [asdict(x) | {"spec_id": x.spec_id} for x in self.optimization_workspace.specs()],
-            "candidates": [asdict(x) for x in self.optimization_workspace.candidates()]}
+            "candidates": [asdict(x) for x in self.optimization_workspace.candidates()],
+            "recipes": [asdict(x) for x in self.optimization_tools.recipes.installed()]}
 
   def close(self) -> None: self.backend.close()
