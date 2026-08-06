@@ -130,10 +130,18 @@ claim a tool result before it is returned. All inference and tools are local.
       call = self.pending_tool_call
       started_at = len(self.events)
       self.state = SessionState.RUNNING_TOOL
-      with self.trace.span("tool", call.name, call_id=call.call_id) as span:
-        self._emit("tool_started", call=asdict(call))
-        result = self.tools.execute(call, permission_token)
-        self.trace.point("tool", "tool_result", span.event_id, ok=result.ok, elapsed_ms=result.elapsed_ms)
+      try:
+        with self.trace.span("tool", call.name, call_id=call.call_id) as span:
+          self._emit("tool_started", call=asdict(call))
+          result = self.tools.execute(call, permission_token)
+          self.trace.point("tool", "tool_result", span.event_id, ok=result.ok, elapsed_ms=result.elapsed_ms)
+      except Exception as exc:
+        # Authorization happens before the tool body. A stale, exhausted or
+        # incorrectly scoped grant must leave the proposed call pending so the
+        # user can issue a fresh explicit grant and retry it safely.
+        self.state = SessionState.AWAITING_TOOL_APPROVAL
+        self._emit("tool_authorization_failed", call_id=call.call_id, error=str(exc), error_type=type(exc).__name__)
+        raise
       self._emit("tool_result", result=asdict(result))
       self.messages.append({"role": "assistant", "content": f"<tool_call>{{\"name\":\"{call.name}\"}}</tool_call>"})
       self.messages.append({"role": "tool", "name": call.name, "tool_call_id": call.call_id, "content": str(result.output)})
