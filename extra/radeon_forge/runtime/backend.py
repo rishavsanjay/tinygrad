@@ -40,6 +40,8 @@ class InferenceBackend(Protocol):
   def name(self) -> str: ...
   @property
   def capabilities(self) -> BackendCapabilities: ...
+  @property
+  def runtime_metadata(self) -> Mapping[str, Any]: ...
   def stream(self, request: GenerationRequest) -> Iterator[GenerationEvent]: ...
   def close(self) -> None: ...
 
@@ -63,11 +65,14 @@ class JsonlProcessBackend:
     if payload.get("kind") != "ready": raise RuntimeError(f"invalid backend handshake: {payload}")
     self._name = str(payload.get("name", "jsonl-local-model"))
     self._capabilities = BackendCapabilities(**payload.get("capabilities", {}))
+    self._runtime_metadata = {str(key): value for key, value in payload.items() if key not in {"kind", "name", "capabilities"}}
 
   @property
   def name(self) -> str: return self._name
   @property
   def capabilities(self) -> BackendCapabilities: return self._capabilities
+  @property
+  def runtime_metadata(self) -> Mapping[str, Any]: return dict(self._runtime_metadata)
 
   def _drain_stderr(self) -> None:
     for line in self._stderr:
