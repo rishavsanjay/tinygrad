@@ -1,4 +1,6 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -15,13 +17,10 @@ from extra.radeon_forge.synthesis.workspace import CandidateWorkspace, KernelSpe
 class KernelEvidenceBackend:
   @property
   def name(self): return "kernel-evidence-local"
-
   @property
   def capabilities(self): return BackendCapabilities(prefix_cache=True, persistent_kv=True, kernel_metrics=True)
-
   @property
   def runtime_metadata(self): return {"runtime":"test", "architecture":"gfx1100", "model_family":"llama"}
-
   def stream(self, request):
     yield GenerationEvent("prefill", metrics={"wall_ms": 8.0, "gpu_ms": 5.0, "prompt_tokens": 24,
                                                "prefix_reused_tokens": 12, "profile_kernel_events": 1})
@@ -35,8 +34,25 @@ class KernelEvidenceBackend:
     yield GenerationEvent("kernel", metrics={"name": "decode_gemv", "duration_ms": 0.90, "stage": "decode", "device": "AMD"})
     yield GenerationEvent("kernel", metrics={"name": "decode_gemv", "duration_ms": 0.70, "stage": "decode", "device": "AMD"})
     yield GenerationEvent("done", finish_reason="stop", metrics={"generated_tokens": 2})
-
   def close(self): pass
+
+
+class BlockingBackend:
+  def __init__(self): self.first_token = threading.Event(); self.release = threading.Event()
+  @property
+  def name(self): return "blocking-local"
+  @property
+  def capabilities(self): return BackendCapabilities(streaming=True)
+  @property
+  def runtime_metadata(self): return {"runtime":"test", "architecture":"gfx1100", "model_family":"llama"}
+  def stream(self, request):
+    yield GenerationEvent("prefill", metrics={"wall_ms": 1.0, "prompt_tokens": 8, "prefix_reused_tokens": 0})
+    yield GenerationEvent("token", "partial ", metrics={"index":0, "stage":"first_token", "wall_ms":1.0})
+    self.first_token.set()
+    if not self.release.wait(2): raise TimeoutError("test did not release backend")
+    yield GenerationEvent("token", "complete", metrics={"index":1, "stage":"decode", "wall_ms":1.0})
+    yield GenerationEvent("done", finish_reason="stop", metrics={"generated_tokens":2})
+  def close(self): self.release.set()
 
 
 class TestRadeonForgeRuntime(unittest.TestCase):
@@ -60,6 +76,26 @@ class TestRadeonForgeRuntime(unittest.TestCase):
       self.assertIn("First-token and steady-decode latency are materially different", titles)
       kernel_events = [event for event in session.trace.events() if event.kind == "kernel"]
       self.assertEqual([event.name for event in kernel_events], ["rmsnorm_fused", "first_token_projection", "decode_gemv", "decode_gemv"])
+      engine.close()
+
+  def test_async_job_exposes_partial_generation(self):
+    with tempfile.TemporaryDirectory() as directory:
+      backend = BlockingBackend()
+      engine = ForgeEngine(backend, directory)
+      session = engine.create_session()
+      job = engine.submit_message(session.session_id, "stream locally")
+      self.assertTrue(backend.first_token.wait(1))
+      self.assertEqual(engine.jobs.snapshot(job["job_id"]).state, "running")
+      self.assertEqual(session.state, SessionState.GENERATING)
+      self.assertEqual(session.partial_output, "partial ")
+      self.assertTrue(any(event["kind"] == "token" for event in session.events_after(0)))
+      backend.release.set()
+      deadline = time.time() + 2
+      while engine.jobs.snapshot(job["job_id"]).state not in {"completed", "failed"} and time.time() < deadline: time.sleep(0.01)
+      self.assertEqual(engine.jobs.snapshot(job["job_id"]).state, "completed")
+      self.assertEqual(session.state, SessionState.COMPLETED)
+      self.assertEqual(session.partial_output, "")
+      self.assertEqual(session.messages[-1]["content"], "partial complete")
       engine.close()
 
   def test_permissioned_tool_round_trip(self):
