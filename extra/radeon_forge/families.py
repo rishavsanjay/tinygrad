@@ -38,6 +38,27 @@ def compiler_defines(parameters: Mapping[str, Any]) -> list[str]:
   return defines
 
 
+def rdna3_asm_matmul_family(root: str | Path, n: int = 1024) -> KernelFamily:
+  """Autotuning family around tinygrad's native gfx1100 AMD-DSL GEMM.
+
+  Each FMAC ordering contains exactly the same mathematical operations; only
+  instruction order changes. LIMIT_OCC controls the deliberate LDS occupancy
+  limiter already present in the kernel harness. Correctness is still checked
+  for every candidate against tinygrad matmul.
+  """
+  source = Path(root) / "extra/gemm/amd_asm_matmul.py"
+  return KernelFamily(
+    name="rdna3-asm-matmul",
+    source_path=source,
+    fixed_defines={"N": n},
+    search_space={
+      "FMAC_ORDER": ("optimized", "row_major", "column_major", "snake"),
+      "LIMIT_OCC": (2, 4, 8),
+    },
+    hypothesis="Search VOPD FMAC issue order and occupancy trade-offs for the existing native gfx1100 GEMM.",
+  )
+
+
 def rdna3_rmsnorm_fp8_family(root: str | Path, n_elems: int, hidden: int, eps_literal: str = "1e-5f") -> KernelFamily:
   """Seed family from tinygrad's fused RMSNorm/multiply/FP8 kernel.
 
