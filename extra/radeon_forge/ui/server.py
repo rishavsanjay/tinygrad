@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import argparse, json, mimetypes, re, sys
+import argparse, json, mimetypes, re, sys, time
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
 
 from ..backends.fake import ScriptedBackend
 from ..runtime import ForgeEngine, JsonlProcessBackend
+from .openai_api import OpenAIRequestError, collect_chat_completion, stream_chat_completion
 
 
 class ForgeRequestHandler(BaseHTTPRequestHandler):
@@ -27,9 +28,24 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
     self.end_headers()
     self.wfile.write(body)
 
+  def _sse(self, chunks: Iterable[str]):
+    self.send_response(200)
+    self.send_header("Content-Type", "text/event-stream")
+    self.send_header("Cache-Control", "no-cache")
+    self.send_header("Connection", "close")
+    self.end_headers()
+    try:
+      for chunk in chunks:
+        self.wfile.write(chunk.encode())
+        self.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError): pass
+    finally: self.close_connection = True
+
   def _body(self) -> dict[str, Any]:
     length = int(self.headers.get("Content-Length", "0"))
-    return json.loads(self.rfile.read(length) or b"{}")
+    payload = json.loads(self.rfile.read(length) or b"{}")
+    if not isinstance(payload, dict): raise ValueError("request body must be a JSON object")
+    return payload
 
   def _static(self, name: str):
     path = (self.static_root / name).resolve()
@@ -52,6 +68,11 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
     try:
       if path == "/": return self._static("index.html")
       if path in {"/app.js", "/style.css", "/kernels.css"}: return self._static(path[1:])
+      if path == "/v1/models":
+        return self._json({"object":"list", "data":[{"id":self.engine.backend.name, "object":"model",
+          "created":int(time.time()), "owned_by":"local-radeon-forge",
+          "forge": {"runtime_fingerprint":asdict(self.engine.runtime_fingerprint()),
+                    "capabilities":asdict(self.engine.backend.capabilities)}}]})
       if path == "/api/health": return self._json({"ok": True, "backend": self.engine.backend.name,
         "capabilities": asdict(self.engine.backend.capabilities), "runtime_fingerprint": asdict(self.engine.runtime_fingerprint())})
       if path == "/api/sessions": return self._json(self.engine.sessions())
@@ -75,6 +96,9 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
     path = urlparse(self.path).path
     try:
       body = self._body()
+      if path == "/v1/chat/completions":
+        if bool(body.get("stream", False)): return self._sse(stream_chat_completion(self.engine, body))
+        return self._json(collect_chat_completion(self.engine, body))
       if path == "/api/sessions": return self._json(self.engine.create_session().snapshot(), HTTPStatus.CREATED)
       if path == "/api/recipes/import":
         result = self.engine.execute_explicit_ui_tool("import_forge_recipe", {"path": str(body.get("path", ""))},
@@ -118,6 +142,8 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
         event = session.reject_tool(str(body.get("reason", "Rejected by user")))
         return self._json({"event": asdict(event), "session": session.snapshot()})
       return self.send_error(404)
+    except OpenAIRequestError as exc:
+      return self._json({"error":{"message":str(exc), "type":"invalid_request_error", "param":None, "code":None}}, 400)
     except (ValueError, RuntimeError, FileNotFoundError) as exc: return self._json({"error": str(exc), "type": type(exc).__name__}, 400)
     except Exception as exc: return self._json({"error": str(exc), "type": type(exc).__name__}, 500)
 
@@ -133,7 +159,7 @@ def build_backend(args):
 
 
 def main():
-  parser = argparse.ArgumentParser(description="Radeon Forge local inference and profiling UI")
+  parser = argparse.ArgumentParser(description="Radeon Forge local inference, agent and profiling server")
   parser.add_argument("--workspace", type=Path, default=Path.cwd())
   parser.add_argument("--backend", choices=("scripted", "tinygrad-llama"), default="scripted")
   parser.add_argument("--model", type=Path)
@@ -144,11 +170,12 @@ def main():
   parser.add_argument("--host", default="127.0.0.1")
   parser.add_argument("--port", type=int, default=7790)
   args = parser.parse_args()
-  if args.host not in {"127.0.0.1", "localhost", "::1"}: raise SystemExit("Forge UI binds to loopback only")
+  if args.host not in {"127.0.0.1", "localhost", "::1"}: raise SystemExit("Forge binds to loopback only")
   engine = ForgeEngine(build_backend(args), args.workspace)
   ForgeRequestHandler.engine = engine
   server = ThreadingHTTPServer((args.host, args.port), ForgeRequestHandler)
-  print(f"Radeon Forge UI: http://{args.host}:{args.port} backend={engine.backend.name} workspace={args.workspace.resolve()}")
+  print(f"Radeon Forge: http://{args.host}:{args.port} backend={engine.backend.name} workspace={args.workspace.resolve()}")
+  print(f"OpenAI-compatible API: http://{args.host}:{args.port}/v1")
   try: server.serve_forever()
   finally: engine.close()
 
