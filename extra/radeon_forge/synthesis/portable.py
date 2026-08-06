@@ -18,21 +18,36 @@ def _toml_value(value: Any) -> str:
 
 
 def _append_table(lines: list[str], name: str, values: Mapping[str, Any]) -> None:
-  if not values: return
+  filtered = {key: value for key, value in values.items() if value is not None and value != {}}
+  if not filtered: return
   lines.append(f"\n[{name}]")
-  for key, value in values.items():
+  for key, value in filtered.items():
     if isinstance(value, Mapping): continue
     lines.append(f"{json.dumps(str(key))} = {_toml_value(value)}")
-  for key, value in values.items():
+  for key, value in filtered.items():
     if isinstance(value, Mapping): _append_table(lines, f"{name}.{key}", value)
 
 
 def export_recipe_with_hook(workspace: CandidateWorkspace, spec_id: str, output: str | Path,
                             candidate_id: str | None = None) -> Path:
-  """Export one recipe while preserving its concrete runtime interception point."""
+  """Export one recipe while preserving both placement and execution-state applicability."""
   path = export_recipe(workspace, spec_id, output, candidate_id)
   spec = workspace.load_spec(spec_id)
   descriptor = HookDescriptor.from_spec(spec)
+  predicate = descriptor.when
+  when = {
+    "stages": [stage.value for stage in predicate.stages],
+    "min_context_tokens": predicate.min_context_tokens,
+    "max_context_tokens": predicate.max_context_tokens,
+    "min_prompt_tokens": predicate.min_prompt_tokens,
+    "max_prompt_tokens": predicate.max_prompt_tokens,
+    "min_generated_token_index": predicate.min_generated_token_index,
+    "max_generated_token_index": predicate.max_generated_token_index,
+    "batch_sizes": list(predicate.batch_sizes),
+    "prefix_cache": predicate.prefix_cache,
+    "warm": predicate.warm,
+    "conditions": dict(predicate.conditions),
+  }
   hook = {
     "layer": descriptor.layer.value,
     "target": descriptor.target,
@@ -42,6 +57,7 @@ def export_recipe_with_hook(workspace: CandidateWorkspace, spec_id: str, output:
     "exclusive_group": descriptor.exclusive_group,
     "description": descriptor.description,
     "selector": dict(descriptor.selector),
+    "when": when,
   }
   lines = path.read_text(encoding="utf-8").rstrip().splitlines()
   _append_table(lines, "metadata.hook", hook)
