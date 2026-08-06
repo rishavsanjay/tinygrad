@@ -9,6 +9,7 @@ from tinygrad.device import Compiled
 from tinygrad.nn.state import get_parameters
 from examples.llama3 import Tokenizer, build_transformer
 
+from ..runtime.tool_stream import ToolStreamParser
 from ..synthesis.hooks import ExecutionContext, ExecutionStage
 from .kv_state import KVReuseLedger
 from .stage_hooks import ModelStageHookRuntime
@@ -126,6 +127,16 @@ def _prefill_without_output_head(model: Any, token_ids: list[int], start_pos: in
   h.realize()
 
 
+def _available_tool_names(tools: Any) -> list[str]:
+  names = []
+  if not isinstance(tools, list): return names
+  for item in tools:
+    if not isinstance(item, Mapping): continue
+    function = item.get("function", {})
+    if isinstance(function, Mapping) and isinstance(function.get("name"), str): names.append(str(function["name"]))
+  return names
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(description="Persistent tinygrad Llama backend for Radeon Forge")
   parser.add_argument("--model", type=Path, required=True)
@@ -164,8 +175,9 @@ def main() -> None:
         "model": str(args.model), "model_family": "llama", "model_hash": _weight_identity(args.model, args.size, args.quantize),
         "model_architecture_hash": architecture_hash, "model_architecture": architecture_data,
         "dtype": args.quantize or "model_default", "shapes": {"batch": 1, "max_context": args.max_context},
-        "parameter_bytes": param_bytes, "capabilities": {"streaming": True, "structured_tools": False,
-        "prefix_cache": True, "persistent_kv": True, "kernel_metrics": True, "cancellation": False}})
+        "parameter_bytes": param_bytes, "capabilities": {"streaming": True, "structured_tools": True,
+        "prefix_cache": True, "persistent_kv": True, "kernel_metrics": True, "cancellation": False,
+        "batched_prefill": True, "stage_hooks": True, "local_only": True}})
 
   for line in sys.stdin:
     try:
@@ -185,6 +197,8 @@ def main() -> None:
       temperature = float(request.get("temperature", 0.0))
       tool_round = int(metadata.get("tool_round", 0))
       resume_after_tool = bool(metadata.get("resume_after_tool", False))
+      tool_names = _available_tool_names(request.get("tools", []))
+      tool_parser = ToolStreamParser(tool_names) if tool_names else None
 
       prompt = [tokenizer.bos_id]
       for message in messages: prompt += encode_message(message)
@@ -233,11 +247,14 @@ def main() -> None:
         start_pos += 1
         last_tok = tok
         if tok in tokenizer.stop_tokens:
+          if tool_parser is not None: tool_parser.finalize()
           send({"kind": "done", "finish_reason": "stop", "metrics": {"generated_tokens": generated,
                 "materialized_kv_tokens": len(kv.cached_tokens)}})
           break
         generated += 1
-        send({"kind": "token", "text": tokenizer.decode([tok]), "metrics": {"index": index, "stage": stage.value,
+        piece = tokenizer.decode([tok])
+        parsed_tool = tool_parser.feed(piece) if tool_parser is not None else None
+        send({"kind": "token", "text": piece, "metrics": {"index": index, "stage": stage.value,
               "wall_ms": wall_ms, "gpu_ms": gpu_ms, "kernel_count": GlobalCounters.kernel_count,
               "global_mem_bytes": GlobalCounters.global_mem, "global_ops": GlobalCounters.global_ops,
               "profile_kernel_events": len(profile), "context_tokens": start_pos,
@@ -246,7 +263,13 @@ def main() -> None:
         if truncated:
           send({"kind": "metric", "metrics": {"name": "profile_truncated", "stage": stage.value, "token_index": index,
                 "captured": emitted, "available": len(profile)}})
+        if parsed_tool is not None:
+          send({"kind": "tool_call", "tool_call": parsed_tool.to_event()})
+          send({"kind": "done", "finish_reason": "tool_call", "metrics": {"generated_tokens": generated,
+                "materialized_kv_tokens": len(kv.cached_tokens), "tool_name": parsed_tool.name}})
+          break
       else:
+        if tool_parser is not None: tool_parser.finalize()
         send({"kind": "done", "finish_reason": "length", "metrics": {"generated_tokens": generated,
               "materialized_kv_tokens": len(kv.cached_tokens), "pending_uncached_output_token": True}})
     except Exception as exc:
