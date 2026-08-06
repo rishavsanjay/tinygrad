@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 from ..oracles.mockgpu import MockGPUOracle
 from ..permissions import Action
 from ..runtime.tools import ToolRegistry, ToolSpec
+from .autotune import SearchPlan, run_autotune
 from .hooks import HookRegistry, RuntimeFingerprint, check_compatibility
 from .portable import export_recipe_with_hook
 from .recipe import RecipeLibrary
@@ -76,9 +77,20 @@ class OptimizationTools:
     return self._run_hardware_command(candidate.candidate_id, spec.hardware_command, int(args.get("timeout_seconds", 900)),
                                       "hardware", "hardware_passed", "hardware_failed")
 
+  def autotune_hardware(self, args: Mapping[str, Any]) -> Any:
+    candidate = self.workspace.load_candidate(str(args["candidate_id"]))
+    spec = self.workspace.load_spec(candidate.spec_id)
+    stored = spec.metadata.get("search", {})
+    if not isinstance(stored, Mapping): stored = {}
+    override = {key: args[key] for key in ("axes", "budgets", "reduction", "max_candidates", "timeout_seconds") if key in args}
+    plan = SearchPlan.from_mapping({**dict(stored), **override})
+    updated, summary = run_autotune(self.workspace, candidate.candidate_id, self.project_root, plan)
+    return {"candidate": asdict(updated), "winner": summary.winner.to_dict() if summary.winner else None,
+            "rounds": summary.rounds, "evaluated_trials": len(summary.evaluated)}
+
   def validate_heldout(self, args: Mapping[str, Any]) -> Any:
     candidate = self.workspace.load_candidate(str(args["candidate_id"]))
-    if candidate.status != "hardware_passed": raise ValueError("candidate must pass the real hardware benchmark first")
+    if candidate.status != "hardware_passed": raise ValueError("candidate must pass the real hardware benchmark or autotuner first")
     spec = self.workspace.load_spec(candidate.spec_id)
     command = tuple(str(x) for x in spec.metadata.get("heldout_command", ()))
     if not command: raise ValueError("spec has no held-out validation command")
@@ -132,6 +144,7 @@ class OptimizationTools:
     registry.register(ToolSpec("stage_kernel_candidate", "Write one disposable implementation for a typed kernel specification", {"type":"object","required":["spec_id","source","hypothesis"],"properties":{"spec_id":{"type":"string"},"source":{"type":"string"},"hypothesis":{"type":"string"},"parent_id":{"type":"string"}}}, Action.WRITE_GENERATED_SOURCE), self.stage_candidate)
     registry.register(ToolSpec("validate_candidate_mockgpu", "Execute a generated AMD candidate through tinygrad's RDNA3 MockGPU semantic oracle", {"type":"object","required":["candidate_id"],"properties":{"candidate_id":{"type":"string"}}}, Action.COMPILE), self.validate_mockgpu)
     registry.register(ToolSpec("benchmark_candidate_w7900", "Benchmark a MockGPU-passing candidate on the real local W7900", {"type":"object","required":["candidate_id"],"properties":{"candidate_id":{"type":"string"},"timeout_seconds":{"type":"integer"},"allow_without_mockgpu":{"type":"boolean"}}}, Action.BENCHMARK), self.benchmark_hardware)
+    registry.register(ToolSpec("autotune_candidate_w7900", "Empirically search a bounded parameter space for one MockGPU-passing implementation in its declared execution stages", {"type":"object","required":["candidate_id","axes"],"properties":{"candidate_id":{"type":"string"},"axes":{"type":"object"},"budgets":{"type":"array"},"reduction":{"type":"integer"},"max_candidates":{"type":"integer"},"timeout_seconds":{"type":"integer"}}}, Action.BENCHMARK), self.autotune_hardware)
     registry.register(ToolSpec("validate_candidate_heldout", "Run a hardware-passing candidate on its held-out correctness and task-quality suite", {"type":"object","required":["candidate_id"],"properties":{"candidate_id":{"type":"string"},"timeout_seconds":{"type":"integer"}}}, Action.BENCHMARK), self.validate_heldout)
     registry.register(ToolSpec("list_forge_recipes", "List portable installed optimization recipes", {"type":"object","properties":{}}), self.list_recipes)
     registry.register(ToolSpec("inspect_forge_recipe", "Read the intent, invariants, execution-stage hook, oracle and artifact inventory of an installed optimization recipe", {"type":"object","required":["recipe_id"],"properties":{"recipe_id":{"type":"string"}}}), self.inspect_recipe)
