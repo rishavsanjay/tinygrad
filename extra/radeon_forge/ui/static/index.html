@@ -24,46 +24,50 @@
           <button class="ghost active" data-tab="console">Console</button>
           <button class="ghost" data-tab="profile">Profiler</button>
           <button class="ghost" data-tab="trace">Timeline</button>
-          <button class="ghost" data-tab="kernels">Kernels</button>
+          <button class="ghost" data-tab="kernels">Optimizations</button>
         </div>
       </header>
 
       <section id="console-tab" class="tab active">
         <div id="messages" class="messages">
-          <div class="empty-state"><div class="hero-mark">RF</div><h2>Optimize the whole agent loop.</h2><p>Run a private model, inspect the repository, approve tools, and trace every turn down to GPU counters.</p></div>
+          <div class="empty-state"><div class="hero-mark">RF</div><h2>Optimize the whole agent loop.</h2><p>Run a private model, inspect the repository, approve tools, and trace every turn down to GPU kernels and execution stages.</p></div>
         </div>
         <div id="approval-card" class="approval-card hidden">
           <div><span class="eyebrow">Permission required</span><strong id="approval-name">Tool call</strong><pre id="approval-args"></pre></div>
           <div class="approval-actions"><button id="reject-tool" class="danger">Reject</button><button id="approve-tool" class="primary">Approve once</button></div>
         </div>
         <form id="composer" class="composer">
-          <textarea id="prompt" rows="2" placeholder="Ask Forge to inspect, profile, optimize, or generate a candidate…"></textarea>
+          <textarea id="prompt" rows="2" placeholder="Ask Forge to inspect, profile, optimize, or generate a stage-specific candidate…"></textarea>
           <button id="send" class="send" type="submit">Run</button>
         </form>
       </section>
 
       <section id="profile-tab" class="tab">
         <div class="metric-grid">
-          <article><span>P50 token</span><strong id="p50-token">—</strong><small>wall time</small></article>
-          <article><span>P95 token</span><strong id="p95-token">—</strong><small>wall time</small></article>
+          <article><span>P50 token</span><strong id="p50-token">—</strong><small>all generated tokens</small></article>
+          <article><span>P95 token</span><strong id="p95-token">—</strong><small>all generated tokens</small></article>
+          <article><span>First token</span><strong id="first-token">—</strong><small>P50 execution state</small></article>
+          <article><span>Steady decode</span><strong id="steady-decode">—</strong><small>P50 execution state</small></article>
           <article><span>Launches/token</span><strong id="launches-token">—</strong><small>tinygrad counters</small></article>
-          <article><span>Tool time</span><strong id="tool-time">—</strong><small>current trace</small></article>
+          <article><span>Hook transitions</span><strong id="hook-transitions">0</strong><small>including rollbacks</small></article>
         </div>
         <div class="profile-layout">
           <div class="panel"><div class="panel-head"><h3>Agentic diagnosis</h3><button id="refresh-profile" class="ghost">Refresh</button></div><div id="findings" class="findings"></div></div>
           <div class="panel"><div class="panel-head"><h3>Time attribution</h3></div><div id="attribution" class="attribution"></div></div>
+          <div class="panel stage-panel"><div class="panel-head"><h3>Dominant kernels by execution state</h3></div><div id="stage-kernels" class="kernel-list compact"></div></div>
         </div>
       </section>
 
       <section id="trace-tab" class="tab">
-        <div class="panel trace-panel"><div class="panel-head"><div><h3>Unified execution timeline</h3><p>Agent → model → token → tool → kernel evidence</p></div><button id="refresh-trace" class="ghost">Refresh</button></div><div id="timeline" class="timeline"></div></div>
+        <div class="panel trace-panel"><div class="panel-head"><div><h3>Unified execution timeline</h3><p>Agent → model state → token → tool → kernel → optimization switch</p></div><button id="refresh-trace" class="ghost">Refresh</button></div><div id="timeline" class="timeline"></div></div>
       </section>
 
       <section id="kernels-tab" class="tab">
         <div class="kernel-layout">
-          <div class="panel"><div class="panel-head"><div><h3>Typed kernel contracts</h3><p>Intent and invariants are durable; generated implementations are disposable.</p></div><button id="refresh-kernels" class="ghost">Refresh</button></div><div id="kernel-specs" class="kernel-list"></div></div>
-          <div class="panel"><div class="panel-head"><div><h3>Candidate pipeline</h3><p>Staged → MockGPU → W7900 → accepted / rejected</p></div></div><div id="kernel-candidates" class="kernel-list"></div></div>
-          <div class="panel recipe-panel"><div class="panel-head"><div><h3>Portable optimization recipes</h3><p>Share intent, invariants, oracle, knowledge, and an optional disposable implementation cache in one file.</p></div></div>
+          <div class="panel active-hooks-panel"><div class="panel-head"><div><h3>Active execution hooks</h3><p>Where the optimization intercepts × when it is allowed to run.</p></div><button id="refresh-kernels" class="ghost">Refresh</button></div><div id="active-hooks" class="kernel-list"></div></div>
+          <div class="panel"><div class="panel-head"><div><h3>Typed optimization contracts</h3><p>Intent and invariants are durable; generated implementations are disposable.</p></div></div><div id="kernel-specs" class="kernel-list"></div></div>
+          <div class="panel"><div class="panel-head"><div><h3>Candidate pipeline</h3><p>Staged → MockGPU → W7900 → held-out → active / rejected</p></div></div><div id="kernel-candidates" class="kernel-list"></div></div>
+          <div class="panel recipe-panel"><div class="panel-head"><div><h3>Portable optimization recipes</h3><p>Share placement, execution-state predicate, intent, oracle, knowledge, and an optional implementation cache in one file.</p></div></div>
             <div class="recipe-import"><input id="recipe-path" placeholder="Path inside workspace, e.g. shared/decode.forge.toml"/><button id="import-recipe" class="primary">Import recipe</button></div>
             <div id="recipe-list" class="kernel-list"></div>
           </div>
@@ -75,11 +79,14 @@
       <div class="inspector-head"><span class="eyebrow">Runtime</span><strong id="runtime-name">Offline</strong></div>
       <div id="capabilities" class="caps"></div>
       <div class="divider"></div>
+      <span class="eyebrow">Runtime fingerprint</span>
+      <dl class="facts"><dt>Arch</dt><dd id="runtime-arch">—</dd><dt>Model</dt><dd id="runtime-model">—</dd><dt>Dtype</dt><dd id="runtime-dtype">—</dd></dl>
+      <div class="divider"></div>
       <span class="eyebrow">Current session</span>
       <dl class="facts"><dt>State</dt><dd id="session-state">—</dd><dt>Trace</dt><dd id="trace-id">—</dd><dt>Events</dt><dd id="event-count">0</dd></dl>
       <div class="divider"></div>
       <span class="eyebrow">Optimization flow</span>
-      <ol class="flow"><li>Observe</li><li>Attribute</li><li>Hypothesize</li><li>Generate</li><li>MockGPU gate</li><li>W7900 benchmark</li><li>Deploy / revert</li></ol>
+      <ol class="flow"><li>Observe by execution state</li><li>Attribute</li><li>Hypothesize</li><li>Generate</li><li>MockGPU gate</li><li>W7900 + held-out</li><li>Activate scoped hook</li><li>Rollback on failure</li></ol>
     </aside>
   </div>
   <div id="toast" class="toast"></div>
