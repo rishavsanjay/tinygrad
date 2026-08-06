@@ -33,3 +33,4 @@ jobs:
           test.test_radeon_forge_recipe
           test.test_radeon_forge_runtime
           test.test_radeon_forge_hooks
+          test.test_radeon_forge_autotune
