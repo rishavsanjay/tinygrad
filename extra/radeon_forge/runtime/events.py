@@ -37,33 +37,32 @@ class TraceRecorder:
     self._events: list[TraceEvent] = []
     self._lock = threading.RLock()
 
-  def point(self, kind: str, name: str, parent_id: str | None = None, **attributes: Any) -> TraceEvent:
-    ts = now_ns()
-    ev = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, name, ts, ts, parent_id, attributes)
-    with self._lock: self._events.append(ev)
-    return ev
+  def point(self, kind: str, event_name: str, parent_id: str | None = None, **attributes: Any) -> TraceEvent:
+    """Record an instantaneous event.
 
-  def duration(self, kind: str, name: str, duration_ms: float, parent_id: str | None = None, **attributes: Any) -> TraceEvent:
-    end = now_ns()
-    start = end - max(0, int(float(duration_ms) * 1e6))
-    ev = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, name, start, end, parent_id, attributes)
+    `event_name` is deliberately not called `name`: backend evidence commonly
+    carries a `name` attribute for the concrete GPU kernel. Keeping those two
+    namespaces separate lets an event be named `kernel` while retaining the
+    real kernel symbol in its attributes.
+    """
+    ev = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, event_name, now_ns(), now_ns(), parent_id, attributes)
     with self._lock: self._events.append(ev)
     return ev
 
   @contextlib.contextmanager
-  def span(self, kind: str, name: str, parent_id: str | None = None, **attributes: Any) -> Iterator[TraceEvent]:
+  def span(self, kind: str, event_name: str, parent_id: str | None = None, **attributes: Any) -> Iterator[TraceEvent]:
     start = now_ns()
-    provisional = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, name, start, None, parent_id, attributes)
+    provisional = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, event_name, start, None, parent_id, attributes)
     try: yield provisional
     except BaseException as exc:
       attrs = dict(attributes)
       attrs.update({"status": "error", "error_type": type(exc).__name__, "error": str(exc)})
-      with self._lock: self._events.append(TraceEvent(provisional.event_id, self.trace_id, kind, name, start, now_ns(), parent_id, attrs))
+      with self._lock: self._events.append(TraceEvent(provisional.event_id, self.trace_id, kind, event_name, start, now_ns(), parent_id, attrs))
       raise
     else:
       attrs = dict(attributes)
       attrs.setdefault("status", "ok")
-      with self._lock: self._events.append(TraceEvent(provisional.event_id, self.trace_id, kind, name, start, now_ns(), parent_id, attrs))
+      with self._lock: self._events.append(TraceEvent(provisional.event_id, self.trace_id, kind, event_name, start, now_ns(), parent_id, attrs))
 
   def extend(self, events: list[TraceEvent]) -> None:
     with self._lock: self._events.extend(events)
