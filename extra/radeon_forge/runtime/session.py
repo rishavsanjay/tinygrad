@@ -16,6 +16,7 @@ class SessionState(str, Enum):
   AWAITING_TOOL_APPROVAL = "awaiting_tool_approval"
   RUNNING_TOOL = "running_tool"
   COMPLETED = "completed"
+  CANCELLED = "cancelled"
   FAILED = "failed"
 
 
@@ -41,6 +42,7 @@ class AgentSession:
     self.pending_tool_call: ToolCall | None = None
     self.pending_assistant_content = ""
     self.partial_output = ""
+    self.last_finish_reason: str | None = None
     self.state = SessionState.IDLE
     self._sequence = 0
     self._lock = threading.RLock()
@@ -60,6 +62,12 @@ claim a tool result before it is returned. All inference and tools are local.
   def _tool_content(call: ToolCall) -> str:
     payload = {"id": call.call_id, "name": call.name, "arguments": dict(call.arguments)}
     return f"<tool_call>{json.dumps(payload, separators=(',', ':'))}</tool_call>"
+
+  @staticmethod
+  def _looks_like_partial_tool_protocol(output: str) -> bool:
+    stripped = output.lstrip()
+    marker = "<tool_call>"
+    return bool(stripped) and (marker.startswith(stripped) or stripped.startswith(marker))
 
   def _emit(self, kind: str, **data: Any) -> SessionEvent:
     self._sequence += 1
@@ -103,8 +111,10 @@ claim a tool result before it is returned. All inference and tools are local.
     self.state = SessionState.GENERATING
     self.partial_output = ""
     self.pending_assistant_content = ""
+    self.last_finish_reason = None
     started_at = len(self.events)
     pieces: list[str] = []
+    done_metrics: dict[str, Any] = {}
     step = sum(1 for event in self.events if event.kind == "generation_started") + 1
     if step > self.max_agent_steps: raise RuntimeError("agent step limit exceeded")
     with self.trace.span("agent", "model_turn", session_id=self.session_id, step=step) as parent:
@@ -130,12 +140,28 @@ claim a tool result before it is returned. All inference and tools are local.
             raw = event.tool_call.get("raw")
             if isinstance(raw, str): self.pending_assistant_content = raw
             self._emit("structured_tool_call", call=asdict(self.pending_tool_call), native=True)
-          elif event.kind == "done": self._emit("generation_done", finish_reason=event.finish_reason, metrics=dict(event.metrics))
+          elif event.kind == "done":
+            self.last_finish_reason = event.finish_reason
+            done_metrics = dict(event.metrics)
+            self._emit("generation_done", finish_reason=event.finish_reason, metrics=done_metrics)
       except Exception as exc:
         self.state = SessionState.FAILED
         self._emit("error", error=str(exc), error_type=type(exc).__name__)
         raise
     output = "".join(pieces)
+
+    if self.last_finish_reason == "cancelled":
+      discarded_tool_prefix = self._looks_like_partial_tool_protocol(output)
+      if output and not discarded_tool_prefix: self.messages.append({"role": "assistant", "content": output})
+      self.pending_tool_call = None
+      self.pending_assistant_content = ""
+      self.partial_output = ""
+      self.state = SessionState.CANCELLED
+      self._emit("generation_cancelled", preserved_output=bool(output and not discarded_tool_prefix),
+                 discarded_incomplete_tool_protocol=discarded_tool_prefix, generated_characters=len(output),
+                 materialized_kv_tokens=done_metrics.get("materialized_kv_tokens"), cancel_stage=done_metrics.get("cancel_stage"))
+      return tuple(self.events[started_at:])
+
     if self.pending_tool_call is None:
       try:
         self.pending_tool_call = parse_tool_call(output)
@@ -200,4 +226,4 @@ claim a tool result before it is returned. All inference and tools are local.
     return {"session_id": self.session_id, "state": self.state.value, "messages": list(self.messages),
             "events": [asdict(x) for x in self.events], "pending_tool_call": asdict(self.pending_tool_call) if self.pending_tool_call else None,
             "pending_assistant_content": self.pending_assistant_content, "partial_output": self.partial_output,
-            "trace_id": self.trace.trace_id}
+            "last_finish_reason": self.last_finish_reason, "trace_id": self.trace.trace_id}
