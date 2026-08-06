@@ -55,6 +55,7 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
       if path == "/api/health": return self._json({"ok": True, "backend": self.engine.backend.name,
                                                     "capabilities": asdict(self.engine.backend.capabilities)})
       if path == "/api/sessions": return self._json(self.engine.sessions())
+      if path == "/api/optimization": return self._json(self.engine.optimization_state())
       session, tail = self._session_route()
       if session is None: return self.send_error(404)
       if tail == "": return self._json(session.snapshot())
