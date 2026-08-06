@@ -2,15 +2,78 @@ from __future__ import annotations
 
 import argparse, json, sys, time
 from pathlib import Path
+from typing import Any, Callable
 
-from tinygrad import Device, GlobalCounters, Tensor
+from tinygrad import Context, Device, GlobalCounters, Tensor
+from tinygrad.device import Compiled
 from tinygrad.nn.state import get_parameters
 from examples.llama3 import Tokenizer, build_transformer
+
+
+MAX_PROFILE_EVENTS_PER_PHASE = 8192
 
 
 def send(payload):
   sys.stdout.write(json.dumps(payload, default=str) + "\n")
   sys.stdout.flush()
+
+
+def _name(value: Any) -> str:
+  return str(getattr(value, "display_name", value))
+
+
+def _collect_profile_events(start: int) -> list[dict[str, Any]]:
+  """Flatten tinygrad device profile ranges into portable kernel evidence.
+
+  Timestamps are device-local, so only durations and ordering are exported.
+  Forge wall-clock spans remain the cross-layer timeline authority.
+  """
+  raw = list(Compiled.profile_events[start:])
+  del Compiled.profile_events[start:]
+  ret: list[dict[str, Any]] = []
+  for event in raw:
+    if hasattr(event, "ents") and hasattr(event, "sigs"):
+      for entry in event.ents:
+        try:
+          st, en = event.sigs[entry.st_id], event.sigs[entry.en_id]
+          duration_us = float(en - st)
+        except Exception: continue
+        device = str(getattr(entry, "device", "UNKNOWN"))
+        if device in {"CPU", "TINY"} or duration_us < 0: continue
+        ret.append({"name": _name(getattr(entry, "name", "kernel")), "device": device,
+                    "duration_ms": duration_us / 1000.0, "profile_event_type": type(event).__name__,
+                    "source": "tinygrad.Compiled.profile_events"})
+    elif hasattr(event, "st") and hasattr(event, "en") and getattr(event, "en") is not None:
+      try: duration_us = float(event.en - event.st)
+      except Exception: continue
+      device = str(getattr(event, "device", "UNKNOWN"))
+      if device in {"CPU", "TINY"} or duration_us < 0: continue
+      ret.append({"name": _name(getattr(event, "name", "kernel")), "device": device,
+                  "duration_ms": duration_us / 1000.0, "profile_event_type": type(event).__name__,
+                  "source": "tinygrad.Compiled.profile_events"})
+  return ret
+
+
+def _profiled(fn: Callable[[], Any]) -> tuple[Any, list[dict[str, Any]]]:
+  start = len(Compiled.profile_events)
+  try:
+    with Context(PROFILE=1): result = fn()
+  except BaseException:
+    _collect_profile_events(start)
+    raise
+  return result, _collect_profile_events(start)
+
+
+def _emit_kernel_events(events: list[dict[str, Any]], *, stage: str, token_index: int | None = None,
+                        prompt_position: int | None = None) -> tuple[int, bool]:
+  truncated = len(events) > MAX_PROFILE_EVENTS_PER_PHASE
+  emitted = events[:MAX_PROFILE_EVENTS_PER_PHASE]
+  for sequence, event in enumerate(emitted):
+    metrics = {**event, "stage": stage, "sequence": sequence}
+    if token_index is not None: metrics["token_index"] = token_index
+    if prompt_position is not None: metrics["prompt_position"] = prompt_position
+    send({"kind": "kernel", "metrics": metrics})
+  return len(emitted), truncated
 
 
 def main() -> None:
@@ -71,9 +134,12 @@ def main() -> None:
       active_session = session_id
       prefill_start = time.perf_counter_ns()
       prefill_gpu_s, prefill_kernels, prefill_mem, prefill_ops = 0.0, 0, 0, 0
+      prefill_profile: list[dict[str, Any]] = []
       for position in range(common, len(prompt) - 1):
         GlobalCounters.reset()
-        model(Tensor([[prompt[position]]], device=device), position, 0.0, 0, 0.0, 0.0, 0.0).realize()
+        _, profile = _profiled(lambda position=position: model(Tensor([[prompt[position]]], device=device), position, 0.0, 0, 0.0, 0.0, 0.0).realize())
+        for event in profile: event["prompt_position"] = position
+        prefill_profile.extend(profile)
         prefill_gpu_s += GlobalCounters.time_sum_s
         prefill_kernels += GlobalCounters.kernel_count
         prefill_mem += GlobalCounters.global_mem
@@ -82,14 +148,21 @@ def main() -> None:
       active_tokens = list(prompt)
       send({"kind": "prefill", "metrics": {"wall_ms": prefill_wall_ms, "gpu_ms": prefill_gpu_s * 1e3,
             "prompt_tokens": len(prompt), "prefix_reused_tokens": common, "new_prompt_tokens": max(0, len(prompt) - 1 - common),
-            "kernel_count": prefill_kernels, "global_mem_bytes": prefill_mem, "global_ops": prefill_ops}})
+            "kernel_count": prefill_kernels, "global_mem_bytes": prefill_mem, "global_ops": prefill_ops,
+            "profile_kernel_events": len(prefill_profile)}})
+      prefill_truncated = len(prefill_profile) > MAX_PROFILE_EVENTS_PER_PHASE
+      for sequence, event in enumerate(prefill_profile[:MAX_PROFILE_EVENTS_PER_PHASE]):
+        send({"kind": "kernel", "metrics": {**event, "stage": "prefill", "sequence": sequence}})
+      if prefill_truncated:
+        send({"kind": "metric", "metrics": {"name": "profile_truncated", "stage": "prefill",
+              "captured": MAX_PROFILE_EVENTS_PER_PHASE, "available": len(prefill_profile)}})
 
       start_pos, last_tok = len(prompt) - 1, prompt[-1]
       generated = 0
       for index in range(max_tokens):
         GlobalCounters.reset()
         wall_start = time.perf_counter_ns()
-        tok = model(Tensor([[last_tok]], device=device), start_pos, temperature, 0, 0.0, 0.0, 0.0).item()
+        tok, profile = _profiled(lambda: model(Tensor([[last_tok]], device=device), start_pos, temperature, 0, 0.0, 0.0, 0.0).item())
         wall_ms = (time.perf_counter_ns() - wall_start) / 1e6
         gpu_ms = GlobalCounters.time_sum_s * 1e3
         start_pos += 1
@@ -101,7 +174,12 @@ def main() -> None:
         generated += 1
         send({"kind": "token", "text": tokenizer.decode([tok]), "metrics": {"index": index, "wall_ms": wall_ms,
               "gpu_ms": gpu_ms, "kernel_count": GlobalCounters.kernel_count, "global_mem_bytes": GlobalCounters.global_mem,
-              "global_ops": GlobalCounters.global_ops, "parameter_bandwidth_gbs": (param_bytes / max(GlobalCounters.time_sum_s, 1e-12)) / 1e9}})
+              "global_ops": GlobalCounters.global_ops, "profile_kernel_events": len(profile),
+              "parameter_bandwidth_gbs": (param_bytes / max(GlobalCounters.time_sum_s, 1e-12)) / 1e9}})
+        emitted, truncated = _emit_kernel_events(profile, stage="decode", token_index=index)
+        if truncated:
+          send({"kind": "metric", "metrics": {"name": "profile_truncated", "stage": "decode", "token_index": index,
+                "captured": emitted, "available": len(profile)}})
       else: send({"kind": "done", "finish_reason": "length", "metrics": {"generated_tokens": generated}})
     except Exception as exc:
       send({"kind": "error", "error": str(exc), "error_type": type(exc).__name__})
