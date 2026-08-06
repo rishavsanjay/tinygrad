@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from extra.radeon_forge.agent import AgentState, AgentStateError, ForgeAgent
 from extra.radeon_forge.amd_metadata import resource_report_from_comgr, resource_report_from_text
 from extra.radeon_forge.command_backend import CommandHarness
 from extra.radeon_forge.contracts import Candidate, CorrectnessReport, ResourceReport, TrialResult, WorkloadContract
@@ -11,8 +12,20 @@ from extra.radeon_forge.families import rdna3_asm_matmul_family, rdna3_rmsnorm_f
 from extra.radeon_forge.knowledge import LocalKnowledgeBase
 from extra.radeon_forge.ledger import ExperimentLedger
 from extra.radeon_forge.permissions import Action, PermissionController, PermissionDenied
-from extra.radeon_forge.planner import LocalEndpointRequired, validate_local_endpoint
+from extra.radeon_forge.planner import LocalEndpointRequired, PlannerDecision, validate_local_endpoint
 from extra.radeon_forge.tuner import successive_halving
+
+
+class FakePlanner:
+  def plan(self, request, contract, evidence=(), memory=()):
+    return PlannerDecision(
+      summary=f"Tune {contract.name}",
+      hypothesis="A different FMAC order may reduce exposed stalls.",
+      candidate_family="rdna3-asm-matmul",
+      proposed_actions=(Action.BENCHMARK,),
+      benchmark_budget=2,
+      rationale=f"Measure on {contract.target}; evidence={len(evidence)}, memory={len(memory)}",
+    )
 
 
 class TestRadeonForge(unittest.TestCase):
@@ -103,6 +116,25 @@ class TestRadeonForge(unittest.TestCase):
       self.assertTrue(hits)
       self.assertIn(str(path), hits[0].citation)
       self.assertIn("VGPR", hits[0].chunk.text)
+
+  def test_multi_turn_agent_requires_matching_approval(self):
+    with tempfile.TemporaryDirectory() as directory:
+      path = Path(directory) / "knowledge.md"
+      path.write_text("RDNA3 VOPD ordering is benchmark-sensitive.\n", encoding="utf-8")
+      knowledge = LocalKnowledgeBase.from_paths([path])
+      ledger = ExperimentLedger(Path(directory) / "events.jsonl")
+      agent = ForgeAgent(WorkloadContract("private-code-agent"), FakePlanner(), knowledge, ledger)
+      proposal = agent.propose("Optimize P95 latency without changing precision")
+      self.assertEqual(agent.state, AgentState.AWAITING_APPROVAL)
+      with self.assertRaises(AgentStateError): agent.approve("wrong-id", "approved")
+      agent.approve(proposal.proposal_id, "I approve two local benchmark trials", max_tool_uses=2)
+      agent.authorize(Action.BENCHMARK)
+      agent.complete({"status": "accepted", "speedup": 1.1})
+      self.assertEqual(agent.state, AgentState.COMPLETED)
+      events = [record["event"] for record in ledger.records()]
+      self.assertIn("proposal_created", events)
+      self.assertIn("proposal_approved", events)
+      self.assertIn("execution_completed", events)
 
 
 if __name__ == "__main__": unittest.main()
