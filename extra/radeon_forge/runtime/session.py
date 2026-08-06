@@ -73,12 +73,16 @@ claim a tool result before it is returned. All inference and tools are local.
     metrics = dict(event.metrics)
     self._emit(event.kind, **metrics)
     if event.kind == "kernel":
-      name = str(metrics.pop("name", "kernel"))
+      name = str(metrics.pop("name", metrics.pop("kernel_name", "kernel")))
       duration_ms = float(metrics.pop("duration_ms", metrics.pop("duration_us", 0.0) / 1000.0))
       self.trace.duration("kernel", name, duration_ms, parent_id, **metrics)
     elif event.kind in {"prefill", "decode"} and float(metrics.get("wall_ms", 0.0)) > 0:
       self.trace.duration("inference", event.kind, float(metrics["wall_ms"]), parent_id, **metrics)
-    else: self.trace.point("inference", event.kind, parent_id, **metrics)
+    else:
+      if "name" in metrics: metrics[f"{event.kind}_name"] = metrics.pop("name")
+      if "kind" in metrics: metrics["backend_kind"] = metrics.pop("kind")
+      if "parent_id" in metrics: metrics["backend_parent_id"] = metrics.pop("parent_id")
+      self.trace.point("inference", event.kind, parent_id, **metrics)
 
   def _generate(self, max_tokens: int, temperature: float) -> tuple[SessionEvent, ...]:
     self.state = SessionState.GENERATING
@@ -95,8 +99,10 @@ claim a tool result before it is returned. All inference and tools are local.
           if event.kind == "token":
             pieces.append(event.text)
             self._emit("token", text=event.text, metrics=dict(event.metrics))
-            self.trace.duration("inference", "token", float(event.metrics.get("wall_ms", 0.0)), parent.event_id,
-                                text=event.text, **dict(event.metrics))
+            token_metrics = dict(event.metrics)
+            if "name" in token_metrics: token_metrics["token_name"] = token_metrics.pop("name")
+            self.trace.duration("inference", "token", float(token_metrics.get("wall_ms", 0.0)), parent.event_id,
+                                text=event.text, **token_metrics)
           elif event.kind in {"prefill", "decode", "kernel", "metric"}: self._record_backend_event(event, parent.event_id)
           elif event.kind == "tool_call" and event.tool_call is not None:
             self.pending_tool_call = ToolCall(str(event.tool_call.get("id") or uuid.uuid4().hex), str(event.tool_call["name"]), event.tool_call.get("arguments", {}))
