@@ -41,7 +41,13 @@ class ForgeEngine:
     return RuntimeFingerprint.from_mapping(metadata if isinstance(metadata, Mapping) else {})
 
   def _session_metadata(self, session: AgentSession, step: int) -> Mapping[str, Any]:
-    return {**self.hooks.runtime_metadata(), "runtime_fingerprint": asdict(self.runtime_fingerprint())}
+    metadata = self.hooks.runtime_metadata()
+    for item in metadata.get("active_hooks", []):
+      try:
+        record = self.optimization_workspace.load_candidate(str(item["candidate_id"]))
+        item["parameters"] = dict(record.evidence.get("selected_parameters", {}))
+      except Exception: item["parameters"] = {}
+    return {**metadata, "runtime_fingerprint": asdict(self.runtime_fingerprint())}
 
   def create_session(self) -> AgentSession:
     with self._lock:
