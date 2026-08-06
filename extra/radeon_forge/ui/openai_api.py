@@ -7,6 +7,9 @@ from typing import Any, Iterable, Mapping, Sequence
 from ..runtime import ForgeEngine, GenerationEvent
 
 
+_TOOL_PREFIX = "<tool_call>"
+
+
 class OpenAIRequestError(ValueError): pass
 
 
@@ -33,8 +36,7 @@ def _tool_call(value: Mapping[str, Any]) -> dict[str, Any]:
           "function": {"name": str(value["name"]), "arguments": json.dumps(value.get("arguments", {}), separators=(",", ":"))}}
 
 
-def _finish_reason(value: str | None) -> str | None:
-  return "tool_calls" if value == "tool_call" else value
+def _finish_reason(value: str | None) -> str | None: return "tool_calls" if value == "tool_call" else value
 
 
 def _summarize(events: Sequence[GenerationEvent], session_id: str) -> dict[str, Any]:
@@ -76,25 +78,49 @@ def collect_chat_completion(engine: ForgeEngine, payload: Mapping[str, Any]) -> 
           "forge": _summarize(events, session_id)}
 
 
+def _content_chunk(completion_id: str, created: int, model: str, text: str, include_role: bool) -> str:
+  delta = {"content": text}
+  if include_role: delta = {"role": "assistant", **delta}
+  chunk = {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model,
+           "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
+  return f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+
+
+def _could_be_tool_protocol(text: str) -> bool:
+  stripped = text.lstrip()
+  return _TOOL_PREFIX.startswith(stripped) or stripped.startswith(_TOOL_PREFIX)
+
+
 def stream_chat_completion(engine: ForgeEngine, payload: Mapping[str, Any]) -> Iterable[str]:
   messages, tools, max_tokens, temperature, session_id, stop = _request(payload)
   completion_id, created = f"chatcmpl-{uuid.uuid4().hex}", int(time.time())
   model = str(payload.get("model") or engine.backend.name)
-  first = True
+  first, buffered, buffering_tool = True, "", False
   for event in engine.stream_inference(messages, tools, max_tokens, temperature, session_id, stop):
     if event.kind == "token":
-      delta = {"content": event.text}
-      if first: delta = {"role": "assistant", **delta}; first = False
-      chunk = {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model,
-               "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
-      yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
+      if first or buffering_tool:
+        buffered += event.text
+        if _could_be_tool_protocol(buffered):
+          buffering_tool = True
+          continue
+        if buffered:
+          yield _content_chunk(completion_id, created, model, buffered, first)
+          first, buffered, buffering_tool = False, "", False
+      else:
+        yield _content_chunk(completion_id, created, model, event.text, False)
     elif event.kind == "tool_call" and event.tool_call is not None:
+      # The native worker already validated the buffered text. Standard clients
+      # receive only the structured delta, never Forge's internal text protocol.
+      buffered, buffering_tool = "", False
       delta = {"tool_calls": [{"index": 0, **_tool_call(event.tool_call)}]}
       if first: delta = {"role": "assistant", **delta}; first = False
       chunk = {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model,
                "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}
       yield f"data: {json.dumps(chunk, separators=(',', ':'))}\n\n"
     elif event.kind == "done":
+      if buffered:
+        yield _content_chunk(completion_id, created, model, buffered, first)
+        first, buffered = False, ""
       chunk = {"id": completion_id, "object": "chat.completion.chunk", "created": created, "model": model,
                "choices": [{"index": 0, "delta": {}, "finish_reason": _finish_reason(event.finish_reason)}],
                "forge_session_id": session_id}
