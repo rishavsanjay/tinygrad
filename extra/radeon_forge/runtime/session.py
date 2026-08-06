@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading, time, uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .backend import GenerationRequest, InferenceBackend
 from .events import TraceRecorder
@@ -30,10 +30,11 @@ class SessionEvent:
 class AgentSession:
   """Persistent private-agent session with explicit tool approval and full tracing."""
   def __init__(self, backend: InferenceBackend, tools: ToolRegistry, system_prompt: str, session_id: str | None = None,
-               max_agent_steps: int = 8, trace: TraceRecorder | None = None):
+               max_agent_steps: int = 8, trace: TraceRecorder | None = None,
+               metadata_provider: Callable[[AgentSession, int], Mapping[str, Any]] | None = None):
     self.session_id = session_id or uuid.uuid4().hex
     self.backend, self.tools, self.system_prompt = backend, tools, system_prompt
-    self.max_agent_steps = max_agent_steps
+    self.max_agent_steps, self.metadata_provider = max_agent_steps, metadata_provider
     self.trace = trace or TraceRecorder()
     self.messages: list[dict[str, Any]] = [{"role": "system", "content": self._system_prompt()}]
     self.events: list[SessionEvent] = []
@@ -84,6 +85,13 @@ claim a tool result before it is returned. All inference and tools are local.
       if "parent_id" in metrics: metrics["backend_parent_id"] = metrics.pop("parent_id")
       self.trace.point("inference", event.kind, parent_id, **metrics)
 
+  def _request_metadata(self, step: int) -> dict[str, Any]:
+    metadata = {"trace_id": self.trace.trace_id, "step": step,
+                "tool_round": sum(1 for event in self.events if event.kind == "tool_result"),
+                "resume_after_tool": bool(self.messages and self.messages[-1].get("role") == "tool")}
+    if self.metadata_provider is not None: metadata.update(dict(self.metadata_provider(self, step)))
+    return metadata
+
   def _generate(self, max_tokens: int, temperature: float) -> tuple[SessionEvent, ...]:
     self.state = SessionState.GENERATING
     started_at = len(self.events)
@@ -93,7 +101,7 @@ claim a tool result before it is returned. All inference and tools are local.
     with self.trace.span("agent", "model_turn", session_id=self.session_id, step=step) as parent:
       self._emit("generation_started", backend=self.backend.name, step=step, capabilities=asdict(self.backend.capabilities))
       request = GenerationRequest(self.session_id, tuple(self.messages), tuple(self.tools.schemas()), max_tokens, temperature,
-                                  metadata={"trace_id": self.trace.trace_id, "step": step})
+                                  metadata=self._request_metadata(step))
       try:
         for event in self.backend.stream(request):
           if event.kind == "token":
@@ -103,7 +111,7 @@ claim a tool result before it is returned. All inference and tools are local.
             if "name" in token_metrics: token_metrics["token_name"] = token_metrics.pop("name")
             self.trace.duration("inference", "token", float(token_metrics.get("wall_ms", 0.0)), parent.event_id,
                                 text=event.text, **token_metrics)
-          elif event.kind in {"prefill", "decode", "kernel", "metric"}: self._record_backend_event(event, parent.event_id)
+          elif event.kind in {"prefill", "decode", "kernel", "metric", "hook"}: self._record_backend_event(event, parent.event_id)
           elif event.kind == "tool_call" and event.tool_call is not None:
             self.pending_tool_call = ToolCall(str(event.tool_call.get("id") or uuid.uuid4().hex), str(event.tool_call["name"]), event.tool_call.get("arguments", {}))
           elif event.kind == "done": self._emit("generation_done", finish_reason=event.finish_reason, metrics=dict(event.metrics))
@@ -136,9 +144,6 @@ claim a tool result before it is returned. All inference and tools are local.
           result = self.tools.execute(call, permission_token)
           self.trace.point("tool", "tool_result", span.event_id, ok=result.ok, elapsed_ms=result.elapsed_ms)
       except Exception as exc:
-        # Authorization happens before the tool body. A stale, exhausted or
-        # incorrectly scoped grant must leave the proposed call pending so the
-        # user can issue a fresh explicit grant and retry it safely.
         self.state = SessionState.AWAITING_TOOL_APPROVAL
         self._emit("tool_authorization_failed", call_id=call.call_id, error=str(exc), error_type=type(exc).__name__)
         raise
