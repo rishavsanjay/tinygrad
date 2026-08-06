@@ -49,6 +49,21 @@ class TraceRecorder:
     with self._lock: self._events.append(ev)
     return ev
 
+  def duration(self, kind: str, event_name: str, duration_ms: float, parent_id: str | None = None, **attributes: Any) -> TraceEvent:
+    """Record a duration measured by another clock domain.
+
+    GPU profile timestamps are device-local and cannot be placed exactly on the
+    CPU wall-clock axis without calibration. We preserve their measured duration
+    and causal parent while anchoring the range at ingestion time. The attributes
+    retain source/stage/order for later calibrated timeline adapters.
+    """
+    duration = max(0.0, float(duration_ms))
+    end = now_ns()
+    start = end - int(duration * 1e6)
+    ev = TraceEvent(uuid.uuid4().hex, self.trace_id, kind, event_name, start, end, parent_id, attributes)
+    with self._lock: self._events.append(ev)
+    return ev
+
   @contextlib.contextmanager
   def span(self, kind: str, event_name: str, parent_id: str | None = None, **attributes: Any) -> Iterator[TraceEvent]:
     start = now_ns()
