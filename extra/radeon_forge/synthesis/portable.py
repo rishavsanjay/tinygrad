@@ -30,7 +30,7 @@ def _append_table(lines: list[str], name: str, values: Mapping[str, Any]) -> Non
 
 def export_recipe_with_hook(workspace: CandidateWorkspace, spec_id: str, output: str | Path,
                             candidate_id: str | None = None) -> Path:
-  """Export one recipe while preserving both placement and execution-state applicability."""
+  """Export placement, execution-state applicability and empirical search knowledge."""
   path = export_recipe(workspace, spec_id, output, candidate_id)
   spec = workspace.load_spec(spec_id)
   descriptor = HookDescriptor.from_spec(spec)
@@ -61,5 +61,19 @@ def export_recipe_with_hook(workspace: CandidateWorkspace, spec_id: str, output:
   }
   lines = path.read_text(encoding="utf-8").rstrip().splitlines()
   _append_table(lines, "metadata.hook", hook)
+
+  # The search space is portable knowledge, not a mandatory implementation
+  # abstraction. A receiving agent may reuse, shrink or replace it, but keeping
+  # it next to the stage predicate makes prior hardware exploration reproducible.
+  search = spec.metadata.get("search", {})
+  if isinstance(search, Mapping) and search: _append_table(lines, "metadata.search", search)
+
+  selected_parameters = {}
+  if candidate_id is not None:
+    candidate = workspace.load_candidate(candidate_id)
+    selected_parameters = candidate.evidence.get("selected_parameters", {})
+  if isinstance(selected_parameters, Mapping) and selected_parameters:
+    _append_table(lines, "metadata.exported_winner", dict(selected_parameters))
+
   path.write_text("\n".join(lines) + "\n", encoding="utf-8")
   return path
