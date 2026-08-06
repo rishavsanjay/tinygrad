@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from extra.radeon_forge.synthesis import CandidateWorkspace, ForgeRecipe, KernelSpec, RecipeLibrary, export_recipe
+from extra.radeon_forge.synthesis import (CandidateWorkspace, ForgeRecipe, HookDescriptor, KernelSpec, RecipeLibrary,
+                                          export_recipe, export_recipe_with_hook)
 
 
 class TestForgeRecipe(unittest.TestCase):
@@ -21,10 +22,23 @@ unknowns = ["best schedule is hardware dependent"]
 seed_artifact = "seed.py"
 
 [compatibility]
-arch = "gfx1100"
+architecture = "gfx1100"
 
 [acceptance]
 maximum_error = 0.000001
+
+[metadata.hook]
+layer = "kernel"
+target = "projection_gemm"
+mode = "replace"
+adapter = "request_metadata"
+exclusive_group = "projection"
+
+[metadata.hook.when]
+stages = ["decode"]
+batch_sizes = [1]
+min_context_tokens = 1024
+prefix_cache = "hit"
 
 [oracle]
 mockgpu_command = ["python3", "{{candidate}}", "--bundle", "{{bundle}}"]
@@ -60,6 +74,11 @@ content = "The implementation is disposable."
       self.assertEqual(Path(candidate.source_path).read_text(encoding="utf-8"), "print('seed')\n")
 
       spec = workspace.load_spec(installed.spec_id)
+      descriptor = HookDescriptor.from_spec(spec)
+      self.assertEqual(descriptor.layer.value, "kernel")
+      self.assertEqual([x.value for x in descriptor.when.stages], ["decode"])
+      self.assertEqual(descriptor.when.min_context_tokens, 1024)
+      self.assertEqual(descriptor.when.prefix_cache, "hit")
       rendered = workspace.render_command(spec.mockgpu_command, spec, candidate, root)
       self.assertEqual(rendered[1], candidate.source_path)
       self.assertEqual(rendered[3], installed.bundle_root)
@@ -71,7 +90,7 @@ content = "The implementation is disposable."
       path.write_text(text, encoding="utf-8")
       with self.assertRaises(ValueError): ForgeRecipe.load(path)
 
-  def test_export_import_round_trip_preserves_contract_and_cache(self):
+  def test_export_import_round_trip_preserves_contract_cache_and_stage_hook(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       source_workspace = CandidateWorkspace(root / "source")
@@ -80,20 +99,40 @@ content = "The implementation is disposable."
         invariants=("match reference", "no remote API"), objective="minimize p95 token latency",
         mockgpu_command=("python3", "{candidate}"), hardware_command=("python3", "{candidate}", "--benchmark"),
         metadata={"recipe_agent_brief":"Use the oracle as the contract and freely rewrite the implementation.",
-                  "recipe_compatibility":{"arch":"gfx1100"}, "recipe_acceptance":{"max_error":1e-6}},
+                  "recipe_compatibility":{"architecture":"gfx1100"}, "recipe_acceptance":{"max_error":1e-6},
+                  "hook":{"layer":"transformer_block", "target":"llama.decode.block", "mode":"replace",
+                          "adapter":"python_transformer_block", "selector":{"indices":[0,1]},
+                          "when":{"stages":["decode"], "batch_sizes":[1], "min_generated_token_index":1,
+                                  "conditions":{"resume_after_tool":False}},
+                          "exclusive_group":"decode-block"}},
       )
       source_workspace.save_spec(spec)
-      candidate = source_workspace.create_candidate(spec.spec_id, "print('candidate')\n", "measured VOPD schedule")
-      exported = export_recipe(source_workspace, spec.spec_id, root / "shared.forge.toml", candidate.candidate_id)
+      candidate = source_workspace.create_candidate(spec.spec_id, "print('candidate')\n", "measured decode implementation")
+      exported = export_recipe_with_hook(source_workspace, spec.spec_id, root / "shared.forge.toml", candidate.candidate_id)
 
       loaded = ForgeRecipe.load(exported)
       self.assertEqual(loaded.target, "gfx1100")
       self.assertEqual(loaded.invariants, spec.invariants)
+      self.assertEqual(loaded.metadata["hook"]["when"]["stages"], ["decode"])
       destination = CandidateWorkspace(root / "destination")
       installed = RecipeLibrary(destination).install(loaded)
       imported = destination.load_candidate(installed.seed_candidate_id)
       self.assertEqual(Path(imported.source_path).read_text(encoding="utf-8"), "print('candidate')\n")
       self.assertEqual(imported.status, "imported_unverified")
+      installed_spec = destination.load_spec(installed.spec_id)
+      descriptor = HookDescriptor.from_spec(installed_spec)
+      self.assertEqual(descriptor.target, "llama.decode.block")
+      self.assertEqual([x.value for x in descriptor.when.stages], ["decode"])
+      self.assertEqual(descriptor.when.min_generated_token_index, 1)
+      self.assertEqual(descriptor.when.conditions["resume_after_tool"], False)
+
+  def test_base_export_remains_valid_without_hook_extension(self):
+    with tempfile.TemporaryDirectory() as directory:
+      root = Path(directory)
+      workspace = CandidateWorkspace(root / "source")
+      spec = workspace.save_spec(KernelSpec("plain", "plain operation", invariants=("correct",)))
+      path = export_recipe(workspace, spec.spec_id, root / "plain.forge.toml")
+      self.assertEqual(ForgeRecipe.load(path).name, "plain")
 
 
 if __name__ == "__main__": unittest.main()
