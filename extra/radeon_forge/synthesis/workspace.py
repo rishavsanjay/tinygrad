@@ -105,6 +105,12 @@ class CandidateWorkspace:
 
   @staticmethod
   def render_command(command: Sequence[str], spec: KernelSpec, candidate: CandidateRecord, root: Path) -> tuple[str, ...]:
+    bundle = str(spec.metadata.get("recipe_bundle", root))
     replacements = {"{candidate}": candidate.source_path, "{candidate_id}": candidate.candidate_id,
-                    "{spec_id}": spec.spec_id, "{root}": str(root)}
-    return tuple(replacements.get(part, part) for part in command)
+                    "{spec_id}": spec.spec_id, "{root}": str(root), "{bundle}": bundle}
+    rendered: list[str] = []
+    for original in command:
+      part = str(original)
+      for key, value in replacements.items(): part = part.replace(key, value)
+      rendered.append(part)
+    return tuple(rendered)
