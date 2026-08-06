@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Iterator, Mapping, Any
 from ..runtime.backend import BackendCapabilities, GenerationEvent, GenerationRequest
 
 
@@ -11,6 +11,9 @@ class ScriptedBackend:
   def name(self) -> str: return "scripted-local"
   @property
   def capabilities(self) -> BackendCapabilities: return BackendCapabilities(kernel_metrics=True)
+  @property
+  def runtime_metadata(self) -> Mapping[str, Any]:
+    return {"runtime": "scripted", "architecture": "", "gpu": "", "model_family": "test"}
   def stream(self, request: GenerationRequest) -> Iterator[GenerationEvent]:
     text = self.responses.pop(0) if self.responses else "Done."
     yield GenerationEvent("prefill", metrics={"wall_ms": 4.0, "prompt_tokens": 32, "prefix_reused_tokens": 24})
