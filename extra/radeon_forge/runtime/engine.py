@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from ..permissions import PermissionController
 from ..profiling.report import build_profile_report
-from ..synthesis import CandidateWorkspace, HookRegistry, OptimizationTools, RuntimeFingerprint, install_default_specs
+from ..synthesis import CandidateWorkspace, OptimizationTools, RuntimeFingerprint, SafeHookRegistry, install_default_specs
 from .backend import InferenceBackend
 from .jobs import LocalJobManager
 from .session import AgentSession
@@ -28,7 +28,7 @@ class ForgeEngine:
     WorkspaceTools(self.workspace).install(self.tools)
     self.optimization_workspace = CandidateWorkspace(self.workspace / ".radeon_forge")
     install_default_specs(self.optimization_workspace)
-    self.hooks = HookRegistry(self.optimization_workspace)
+    self.hooks = SafeHookRegistry(self.optimization_workspace)
     self.optimization_tools = OptimizationTools(self.optimization_workspace, self.workspace, self.hooks, self.runtime_fingerprint)
     self.optimization_tools.install(self.tools)
     self.jobs = LocalJobManager()
@@ -96,6 +96,7 @@ class ForgeEngine:
             "candidates": [asdict(x) for x in self.optimization_workspace.candidates()],
             "recipes": [asdict(x) for x in self.optimization_tools.recipes.installed()],
             "active_hooks": [asdict(x) for x in self.hooks.active()],
-            "runtime_fingerprint": asdict(self.runtime_fingerprint())}
+            "runtime_fingerprint": asdict(self.runtime_fingerprint()),
+            "runtime_adapters": sorted(self.hooks.SUPPORTED_ADAPTERS)}
 
   def close(self) -> None: self.backend.close()
