@@ -39,6 +39,7 @@ class AgentSession:
     self.messages: list[dict[str, Any]] = [{"role": "system", "content": self._system_prompt()}]
     self.events: list[SessionEvent] = []
     self.pending_tool_call: ToolCall | None = None
+    self.partial_output = ""
     self.state = SessionState.IDLE
     self._sequence = 0
     self._lock = threading.RLock()
@@ -94,6 +95,7 @@ claim a tool result before it is returned. All inference and tools are local.
 
   def _generate(self, max_tokens: int, temperature: float) -> tuple[SessionEvent, ...]:
     self.state = SessionState.GENERATING
+    self.partial_output = ""
     started_at = len(self.events)
     pieces: list[str] = []
     step = sum(1 for event in self.events if event.kind == "generation_started") + 1
@@ -106,6 +108,7 @@ claim a tool result before it is returned. All inference and tools are local.
         for event in self.backend.stream(request):
           if event.kind == "token":
             pieces.append(event.text)
+            self.partial_output += event.text
             self._emit("token", text=event.text, metrics=dict(event.metrics))
             token_metrics = dict(event.metrics)
             if "name" in token_metrics: token_metrics["token_name"] = token_metrics.pop("name")
@@ -124,10 +127,12 @@ claim a tool result before it is returned. All inference and tools are local.
       try: self.pending_tool_call = parse_tool_call(output)
       except Exception as exc: self._emit("tool_parse_error", error=str(exc), raw=output)
     if self.pending_tool_call is not None:
+      self.partial_output = ""
       self.state = SessionState.AWAITING_TOOL_APPROVAL
       self._emit("tool_approval_required", call=asdict(self.pending_tool_call), action=self.tools.spec(self.pending_tool_call.name).action.value)
     else:
       self.messages.append({"role": "assistant", "content": output})
+      self.partial_output = ""
       self.state = SessionState.COMPLETED
       self._emit("message", role="assistant", content=output)
     return tuple(self.events[started_at:])
@@ -167,7 +172,10 @@ claim a tool result before it is returned. All inference and tools are local.
       self.state = SessionState.IDLE
       return self._emit("tool_rejected", call_id=call.call_id, reason=reason)
 
+  def events_after(self, sequence: int) -> list[dict[str, Any]]:
+    return [asdict(event) for event in self.events if event.sequence > sequence]
+
   def snapshot(self) -> dict[str, Any]:
     return {"session_id": self.session_id, "state": self.state.value, "messages": list(self.messages),
             "events": [asdict(x) for x in self.events], "pending_tool_call": asdict(self.pending_tool_call) if self.pending_tool_call else None,
-            "trace_id": self.trace.trace_id}
+            "partial_output": self.partial_output, "trace_id": self.trace.trace_id}
