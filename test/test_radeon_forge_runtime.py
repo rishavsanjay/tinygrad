@@ -55,6 +55,22 @@ class BlockingBackend:
   def close(self): self.release.set()
 
 
+class NativeToolBackend:
+  RAW = '<tool_call>{"id":"call-7","name":"read_file","arguments":{"path":"hello.txt","start_line":2}}</tool_call>'
+  @property
+  def name(self): return "native-tool-local"
+  @property
+  def capabilities(self): return BackendCapabilities(structured_tools=True)
+  @property
+  def runtime_metadata(self): return {"runtime":"test", "architecture":"gfx1100", "model_family":"llama"}
+  def stream(self, request):
+    yield GenerationEvent("token", self.RAW, metrics={"index":0, "stage":"first_token", "wall_ms":1.0})
+    yield GenerationEvent("tool_call", tool_call={"id":"call-7", "name":"read_file",
+      "arguments":{"path":"hello.txt", "start_line":2}, "raw":self.RAW})
+    yield GenerationEvent("done", finish_reason="tool_call", metrics={"generated_tokens":1})
+  def close(self): pass
+
+
 class TestRadeonForgeRuntime(unittest.TestCase):
   def test_kernel_evidence_survives_unified_trace_and_is_ranked_by_stage(self):
     with tempfile.TemporaryDirectory() as directory:
@@ -98,7 +114,7 @@ class TestRadeonForgeRuntime(unittest.TestCase):
       self.assertEqual(session.messages[-1]["content"], "partial complete")
       engine.close()
 
-  def test_permissioned_tool_round_trip(self):
+  def test_permissioned_tool_round_trip_preserves_arguments(self):
     responses = [
       '<tool_call>{"name":"read_file","arguments":{"path":"hello.txt"}}</tool_call>',
       "The private file was read successfully.",
@@ -115,7 +131,26 @@ class TestRadeonForgeRuntime(unittest.TestCase):
       session.approve_tool(token)
       self.assertEqual(session.state, SessionState.COMPLETED)
       self.assertEqual(session.messages[-1]["content"], "The private file was read successfully.")
+      assistant_tool = next(message for message in session.messages if message.get("role") == "assistant" and "<tool_call>" in message.get("content", ""))
+      self.assertIn('"path":"hello.txt"', assistant_tool["content"])
       self.assertTrue(any(event.kind == "tool_result" for event in session.events))
+      engine.close()
+
+  def test_native_structured_tool_call_and_rejection_are_lossless(self):
+    with tempfile.TemporaryDirectory() as directory:
+      Path(directory, "hello.txt").write_text("line1\nline2\n", encoding="utf-8")
+      engine = ForgeEngine(NativeToolBackend(), directory)
+      session = engine.create_session()
+      session.send("read line two")
+      self.assertEqual(session.state, SessionState.AWAITING_TOOL_APPROVAL)
+      self.assertEqual(session.pending_tool_call.call_id, "call-7")
+      self.assertEqual(session.pending_tool_call.arguments["start_line"], 2)
+      self.assertEqual(session.pending_assistant_content, NativeToolBackend.RAW)
+      session.reject_tool("not now")
+      self.assertEqual(session.state, SessionState.IDLE)
+      self.assertEqual(session.messages[-2]["content"], NativeToolBackend.RAW)
+      self.assertEqual(session.messages[-1]["tool_call_id"], "call-7")
+      self.assertIn("not now", session.messages[-1]["content"])
       engine.close()
 
   def test_workspace_paths_cannot_escape(self):
