@@ -51,7 +51,7 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
     path = urlparse(self.path).path
     try:
       if path == "/": return self._static("index.html")
-      if path in {"/app.js", "/style.css"}: return self._static(path[1:])
+      if path in {"/app.js", "/style.css", "/kernels.css"}: return self._static(path[1:])
       if path == "/api/health": return self._json({"ok": True, "backend": self.engine.backend.name,
                                                     "capabilities": asdict(self.engine.backend.capabilities)})
       if path == "/api/sessions": return self._json(self.engine.sessions())
