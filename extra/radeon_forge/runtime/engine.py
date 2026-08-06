@@ -1,19 +1,21 @@
 from __future__ import annotations
 
-import threading, uuid
+import contextlib, threading, uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence, TypeVar
 
 from ..permissions import PermissionController
 from ..profiling.report import build_profile_report
 from ..synthesis import CandidateWorkspace, OptimizationTools, RuntimeFingerprint, SafeHookRegistry, install_default_specs
 from .backend import GenerationEvent, GenerationRequest, InferenceBackend
 from .jobs import LocalJobManager
-from .session import AgentSession
+from .session import AgentSession, SessionState
 from .tool_prompt import inject_tool_instruction
 from .tools import ToolCall, ToolRegistry, WorkspaceTools
 
+
+T = TypeVar("T")
 
 DEFAULT_SYSTEM_PROMPT = """You are Radeon Forge, a private local software and inference performance engineer.
 Use evidence before making performance claims. Separate observations, inferences and unknowns. Prefer reversible changes and preserve correctness. You may inspect the private workspace, author disposable target-specific kernel candidates, import portable optimization recipes, validate implementations through tinygrad MockGPU, and request permission for real W7900 benchmarks. Never treat MockGPU timing as performance evidence.
@@ -35,6 +37,9 @@ class ForgeEngine:
     self.jobs = LocalJobManager()
     self._sessions: dict[str, AgentSession] = {}
     self._lock = threading.RLock()
+    self._generation_gate = threading.Lock()
+    self._generation_state_lock = threading.RLock()
+    self._active_generation_id: str | None = None
 
   def runtime_fingerprint(self) -> RuntimeFingerprint:
     metadata = getattr(self.backend, "runtime_metadata", {})
@@ -52,14 +57,33 @@ class ForgeEngine:
 
   def _session_metadata(self, session: AgentSession, step: int) -> Mapping[str, Any]: return self.inference_metadata()
 
+  @contextlib.contextmanager
+  def _generation_slot(self, generation_id: str):
+    with self._generation_gate:
+      with self._generation_state_lock: self._active_generation_id = generation_id
+      try: yield
+      finally:
+        with self._generation_state_lock:
+          if self._active_generation_id == generation_id: self._active_generation_id = None
+
+  def _run_generation(self, generation_id: str, fn: Callable[[], T]) -> T:
+    with self._generation_slot(generation_id): return fn()
+
+  @property
+  def active_generation_id(self) -> str | None:
+    with self._generation_state_lock: return self._active_generation_id
+
   def stream_inference(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]] = (),
                        max_tokens: int = 256, temperature: float = 0.0, session_id: str | None = None,
                        stop: Sequence[str] = ()) -> Iterator[GenerationEvent]:
     """Serve the resident local model without losing Forge hooks, tools or profiling events."""
+    generation_id = session_id or uuid.uuid4().hex
     rendered_messages = inject_tool_instruction(messages, tools)
-    request = GenerationRequest(session_id or uuid.uuid4().hex, tuple(rendered_messages), tuple(tools), max_tokens, temperature,
+    request = GenerationRequest(generation_id, tuple(rendered_messages), tuple(tools), max_tokens, temperature,
                                 tuple(stop), metadata=self.inference_metadata())
-    return self.backend.stream(request)
+    def iterator():
+      with self._generation_slot(generation_id): yield from self.backend.stream(request)
+    return iterator()
 
   def create_session(self) -> AgentSession:
     with self._lock:
@@ -74,16 +98,32 @@ class ForgeEngine:
   def sessions(self) -> list[dict[str, Any]]:
     with self._lock: return [{"session_id": x.session_id, "state": x.state.value, "trace_id": x.trace.trace_id} for x in self._sessions.values()]
 
-  def submit_message(self, session_id: str, content: str, max_tokens: int = 512, temperature: float = 0.0) -> dict[str, Any]:
+  def run_message(self, session_id: str, content: str, max_tokens: int = 512, temperature: float = 0.0):
     session = self.session(session_id)
-    job = self.jobs.submit("agent_turn", session_id, lambda: session.send(content, max_tokens, temperature))
+    return self._run_generation(session_id, lambda: session.send(content, max_tokens, temperature))
+
+  def submit_message(self, session_id: str, content: str, max_tokens: int = 512, temperature: float = 0.0) -> dict[str, Any]:
+    job = self.jobs.submit("agent_turn", session_id, lambda: self.run_message(session_id, content, max_tokens, temperature))
     return asdict(job)
 
-  def submit_tool_approval(self, session_id: str, reason: str, max_tokens: int = 512) -> dict[str, Any]:
+  def run_tool_approval(self, session_id: str, reason: str, max_tokens: int = 512):
     session = self.session(session_id)
     token = self.grant_for_pending_tool(session_id, reason)
-    job = self.jobs.submit("tool_and_resume", session_id, lambda: session.approve_tool(token, max_tokens))
+    return self._run_generation(session_id, lambda: session.approve_tool(token, max_tokens))
+
+  def submit_tool_approval(self, session_id: str, reason: str, max_tokens: int = 512) -> dict[str, Any]:
+    job = self.jobs.submit("tool_and_resume", session_id, lambda: self.run_tool_approval(session_id, reason, max_tokens))
     return asdict(job)
+
+  def cancel_generation(self, session_id: str) -> dict[str, Any]:
+    session = self.session(session_id)
+    if not self.backend.capabilities.cancellation: raise RuntimeError("resident model backend does not support cooperative cancellation")
+    active = self.active_generation_id
+    if active != session_id or session.state is not SessionState.GENERATING:
+      raise RuntimeError(f"session {session_id} is not the active model generation")
+    self.backend.cancel()
+    return {"requested": True, "session_id": session_id, "active_generation_id": active,
+            "state": session.state.value, "model_remains_resident": True, "kv_state_preserved": True}
 
   def grant_for_pending_tool(self, session_id: str, reason: str, max_uses: int = 1) -> str:
     session = self.session(session_id)
@@ -109,6 +149,7 @@ class ForgeEngine:
             "recipes": [asdict(x) for x in self.optimization_tools.recipes.installed()],
             "active_hooks": [asdict(x) for x in self.hooks.active()],
             "runtime_fingerprint": asdict(self.runtime_fingerprint()),
-            "runtime_adapters": sorted(self.hooks.SUPPORTED_ADAPTERS)}
+            "runtime_adapters": sorted(self.hooks.SUPPORTED_ADAPTERS),
+            "active_generation_id": self.active_generation_id}
 
   def close(self) -> None: self.backend.close()
