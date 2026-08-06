@@ -20,9 +20,10 @@
       <header class="topbar">
         <div><h1 id="session-title">Agent Console</h1><p id="backend-status">Connecting to local backend…</p></div>
         <div class="top-actions">
-          <button class="ghost" data-tab="console">Console</button>
+          <button class="ghost active" data-tab="console">Console</button>
           <button class="ghost" data-tab="profile">Profiler</button>
           <button class="ghost" data-tab="trace">Timeline</button>
+          <button class="ghost" data-tab="kernels">Kernels</button>
         </div>
       </header>
 
@@ -55,6 +56,13 @@
 
       <section id="trace-tab" class="tab">
         <div class="panel trace-panel"><div class="panel-head"><div><h3>Unified execution timeline</h3><p>Agent → model → token → tool → kernel evidence</p></div><button id="refresh-trace" class="ghost">Refresh</button></div><div id="timeline" class="timeline"></div></div>
+      </section>
+
+      <section id="kernels-tab" class="tab">
+        <div class="kernel-layout">
+          <div class="panel"><div class="panel-head"><div><h3>Typed kernel contracts</h3><p>Intent and invariants are durable; generated implementations are disposable.</p></div><button id="refresh-kernels" class="ghost">Refresh</button></div><div id="kernel-specs" class="kernel-list"></div></div>
+          <div class="panel"><div class="panel-head"><div><h3>Candidate pipeline</h3><p>Staged → MockGPU → W7900 → accepted / rejected</p></div></div><div id="kernel-candidates" class="kernel-list"></div></div>
+        </div>
       </section>
     </main>
 
