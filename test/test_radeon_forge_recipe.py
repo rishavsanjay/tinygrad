@@ -40,6 +40,15 @@ batch_sizes = [1]
 min_context_tokens = 1024
 prefix_cache = "hit"
 
+[metadata.search]
+budgets = [3, 10]
+reduction = 2
+max_candidates = 16
+
+[metadata.search.axes]
+WAVES = [2, 4]
+STAGES = [1, 2]
+
 [oracle]
 mockgpu_command = ["python3", "{{candidate}}", "--bundle", "{{bundle}}"]
 hardware_command = ["python3", "{{candidate}}", "--benchmark"]
@@ -79,6 +88,7 @@ content = "The implementation is disposable."
       self.assertEqual([x.value for x in descriptor.when.stages], ["decode"])
       self.assertEqual(descriptor.when.min_context_tokens, 1024)
       self.assertEqual(descriptor.when.prefix_cache, "hit")
+      self.assertEqual(spec.metadata["search"]["axes"]["WAVES"], [2, 4])
       rendered = workspace.render_command(spec.mockgpu_command, spec, candidate, root)
       self.assertEqual(rendered[1], candidate.source_path)
       self.assertEqual(rendered[3], installed.bundle_root)
@@ -90,7 +100,7 @@ content = "The implementation is disposable."
       path.write_text(text, encoding="utf-8")
       with self.assertRaises(ValueError): ForgeRecipe.load(path)
 
-  def test_export_import_round_trip_preserves_contract_cache_and_stage_hook(self):
+  def test_export_import_round_trip_preserves_contract_cache_stage_and_search(self):
     with tempfile.TemporaryDirectory() as directory:
       root = Path(directory)
       source_workspace = CandidateWorkspace(root / "source")
@@ -100,6 +110,8 @@ content = "The implementation is disposable."
         mockgpu_command=("python3", "{candidate}"), hardware_command=("python3", "{candidate}", "--benchmark"),
         metadata={"recipe_agent_brief":"Use the oracle as the contract and freely rewrite the implementation.",
                   "recipe_compatibility":{"architecture":"gfx1100"}, "recipe_acceptance":{"max_error":1e-6},
+                  "search":{"axes":{"WAVES":[2,4], "UNROLL":[1,2]}, "budgets":[3,10,30], "reduction":2,
+                            "max_candidates":16},
                   "hook":{"layer":"transformer_block", "target":"llama.decode.block", "mode":"replace",
                           "adapter":"python_transformer_block", "selector":{"indices":[0,1]},
                           "when":{"stages":["decode"], "batch_sizes":[1], "min_generated_token_index":1,
@@ -108,12 +120,15 @@ content = "The implementation is disposable."
       )
       source_workspace.save_spec(spec)
       candidate = source_workspace.create_candidate(spec.spec_id, "print('candidate')\n", "measured decode implementation")
+      source_workspace.update(candidate.candidate_id, "hardware_passed", {"selected_parameters":{"WAVES":4, "UNROLL":2}})
       exported = export_recipe_with_hook(source_workspace, spec.spec_id, root / "shared.forge.toml", candidate.candidate_id)
 
       loaded = ForgeRecipe.load(exported)
       self.assertEqual(loaded.target, "gfx1100")
       self.assertEqual(loaded.invariants, spec.invariants)
       self.assertEqual(loaded.metadata["hook"]["when"]["stages"], ["decode"])
+      self.assertEqual(loaded.metadata["search"]["axes"]["WAVES"], [2, 4])
+      self.assertEqual(loaded.metadata["exported_winner"], {"WAVES":4, "UNROLL":2})
       destination = CandidateWorkspace(root / "destination")
       installed = RecipeLibrary(destination).install(loaded)
       imported = destination.load_candidate(installed.seed_candidate_id)
@@ -125,6 +140,8 @@ content = "The implementation is disposable."
       self.assertEqual([x.value for x in descriptor.when.stages], ["decode"])
       self.assertEqual(descriptor.when.min_generated_token_index, 1)
       self.assertEqual(descriptor.when.conditions["resume_after_tool"], False)
+      self.assertEqual(installed_spec.metadata["search"]["axes"]["UNROLL"], [1, 2])
+      self.assertEqual(installed_spec.metadata["exported_winner"]["WAVES"], 4)
 
   def test_base_export_remains_valid_without_hook_extension(self):
     with tempfile.TemporaryDirectory() as directory:
