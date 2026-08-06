@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from ..oracles.mockgpu import MockGPUOracle
 from ..permissions import Action
 from ..runtime.tools import ToolRegistry, ToolSpec
+from .recipe import RecipeLibrary, export_recipe
 from .workspace import CandidateWorkspace
 
 
@@ -16,6 +17,13 @@ class OptimizationTools:
     self.workspace = workspace
     self.project_root = Path(project_root).resolve()
     self.mockgpu = MockGPUOracle(self.project_root)
+    self.recipes = RecipeLibrary(workspace)
+
+  def _project_path(self, value: str, *, must_exist: bool = False) -> Path:
+    path = (self.project_root / value).resolve() if not Path(value).is_absolute() else Path(value).resolve()
+    if path != self.project_root and self.project_root not in path.parents: raise ValueError("path must stay inside the private workspace")
+    if must_exist and not path.is_file(): raise FileNotFoundError(path)
+    return path
 
   def list_specs(self, args: Mapping[str, Any]) -> Any:
     return {"specs": [asdict(x) | {"spec_id": x.spec_id} for x in self.workspace.specs()]}
@@ -32,7 +40,8 @@ class OptimizationTools:
     spec = self.workspace.load_spec(candidate.spec_id)
     if not spec.mockgpu_command: raise ValueError("spec has no MockGPU oracle command")
     command = self.workspace.render_command(spec.mockgpu_command, spec, candidate, self.project_root)
-    result = self.mockgpu.run(command, env={"RADEON_FORGE_CANDIDATE": candidate.source_path})
+    result = self.mockgpu.run(command, env={"RADEON_FORGE_CANDIDATE": candidate.source_path,
+                                            "RADEON_FORGE_RECIPE_BUNDLE": str(spec.metadata.get("recipe_bundle", ""))})
     updated = self.workspace.update(candidate.candidate_id, "mockgpu_passed" if result.passed else "mockgpu_failed", {"mockgpu": result.to_dict()})
     return asdict(updated)
 
@@ -43,13 +52,30 @@ class OptimizationTools:
     spec = self.workspace.load_spec(candidate.spec_id)
     if not spec.hardware_command: raise ValueError("spec has no hardware benchmark command")
     command = self.workspace.render_command(spec.hardware_command, spec, candidate, self.project_root)
-    env = {**os.environ, "DEV": "AMD", "RADEON_FORGE_CANDIDATE": candidate.source_path, "PYTHONUNBUFFERED": "1"}
+    env = {**os.environ, "DEV": "AMD", "RADEON_FORGE_CANDIDATE": candidate.source_path,
+           "RADEON_FORGE_RECIPE_BUNDLE": str(spec.metadata.get("recipe_bundle", "")), "PYTHONUNBUFFERED": "1"}
     started = time.perf_counter_ns()
-    proc = subprocess.run(command, cwd=self.project_root, env=env, text=True, capture_output=True, timeout=int(args.get("timeout_seconds", 900)))
+    proc = subprocess.run(command, cwd=str(spec.metadata.get("recipe_bundle", self.project_root)), env=env, text=True, capture_output=True,
+                          timeout=int(args.get("timeout_seconds", 900)))
     evidence = {"command": command, "returncode": proc.returncode, "elapsed_ms": (time.perf_counter_ns()-started)/1e6,
-                "stdout": proc.stdout[-50000:], "stderr": proc.stderr[-50000:], "target": "gfx1100"}
+                "stdout": proc.stdout[-50000:], "stderr": proc.stderr[-50000:], "target": spec.target}
     updated = self.workspace.update(candidate.candidate_id, "hardware_passed" if proc.returncode == 0 else "hardware_failed", {"hardware": evidence})
     return asdict(updated)
+
+  def list_recipes(self, args: Mapping[str, Any]) -> Any:
+    return {"recipes": [asdict(x) for x in self.recipes.installed()]}
+
+  def inspect_recipe(self, args: Mapping[str, Any]) -> Any:
+    return self.recipes.inspect(str(args["recipe_id"]))
+
+  def import_recipe(self, args: Mapping[str, Any]) -> Any:
+    path = self._project_path(str(args["path"]), must_exist=True)
+    return asdict(self.recipes.install_file(path))
+
+  def export_recipe_file(self, args: Mapping[str, Any]) -> Any:
+    output = self._project_path(str(args["output"]))
+    path = export_recipe(self.workspace, str(args["spec_id"]), output, str(args["candidate_id"]) if args.get("candidate_id") else None)
+    return {"path": str(path), "sha256": __import__("hashlib").sha256(path.read_bytes()).hexdigest(), "portable": True}
 
   def install(self, registry: ToolRegistry) -> None:
     registry.register(ToolSpec("list_kernel_specs", "List typed megakernel and fused-kernel contracts", {"type":"object","properties":{}}), self.list_specs)
@@ -57,3 +83,7 @@ class OptimizationTools:
     registry.register(ToolSpec("stage_kernel_candidate", "Write one disposable implementation for a typed kernel specification", {"type":"object","required":["spec_id","source","hypothesis"],"properties":{"spec_id":{"type":"string"},"source":{"type":"string"},"hypothesis":{"type":"string"},"parent_id":{"type":"string"}}}, Action.WRITE_GENERATED_SOURCE), self.stage_candidate)
     registry.register(ToolSpec("validate_candidate_mockgpu", "Execute a generated AMD candidate through tinygrad's RDNA3 MockGPU semantic oracle", {"type":"object","required":["candidate_id"],"properties":{"candidate_id":{"type":"string"}}}, Action.COMPILE), self.validate_mockgpu)
     registry.register(ToolSpec("benchmark_candidate_w7900", "Benchmark a MockGPU-passing candidate on the real local W7900", {"type":"object","required":["candidate_id"],"properties":{"candidate_id":{"type":"string"},"timeout_seconds":{"type":"integer"},"allow_without_mockgpu":{"type":"boolean"}}}, Action.BENCHMARK), self.benchmark_hardware)
+    registry.register(ToolSpec("list_forge_recipes", "List portable installed optimization recipes", {"type":"object","properties":{}}), self.list_recipes)
+    registry.register(ToolSpec("inspect_forge_recipe", "Read the intent, invariants, oracle and artifact inventory of an installed optimization recipe", {"type":"object","required":["recipe_id"],"properties":{"recipe_id":{"type":"string"}}}), self.inspect_recipe)
+    registry.register(ToolSpec("import_forge_recipe", "Install one portable .forge.toml optimization recipe from the private workspace", {"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}, Action.WRITE_GENERATED_SOURCE), self.import_recipe)
+    registry.register(ToolSpec("export_forge_recipe", "Export a contract and optional implementation cache as one shareable .forge.toml file", {"type":"object","required":["spec_id","output"],"properties":{"spec_id":{"type":"string"},"candidate_id":{"type":"string"},"output":{"type":"string"}}}, Action.WRITE_GENERATED_SOURCE), self.export_recipe_file)
