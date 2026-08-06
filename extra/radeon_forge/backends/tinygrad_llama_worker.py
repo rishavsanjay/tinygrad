@@ -10,6 +10,7 @@ from tinygrad.nn.state import get_parameters
 from examples.llama3 import Tokenizer, build_transformer
 
 from ..synthesis.hooks import ExecutionContext, ExecutionStage
+from .kv_state import KVReuseLedger
 from .stage_hooks import ModelStageHookRuntime
 
 
@@ -146,6 +147,7 @@ def main() -> None:
   param_bytes = sum(x.nbytes() for x in get_parameters(model))
   architecture_data, architecture_hash = _architecture_identity(model, args.size, args.quantize)
   hook_runtime = ModelStageHookRuntime(model)
+  kv = KVReuseLedger()
   device_obj = Device[device]
   architecture = str(getattr(device_obj, "arch", ""))
 
@@ -157,8 +159,6 @@ def main() -> None:
     if not isinstance(content, str): content = json.dumps(content, default=str)
     return encode_role(str(message.get("role", "user"))) + tokenizer.encode(content.strip()) + [tokenizer.special_tokens["<|eot_id|>"]]
 
-  active_session: str | None = None
-  cached_tokens: list[int] = []  # only tokens whose KV entries are actually materialized
   send({"kind": "ready", "name": f"tinygrad-llama-{args.size}", "device": str(device), "gpu": str(device),
         "architecture": architecture, "runtime": "tinygrad", "runtime_revision": _git_revision(),
         "model": str(args.model), "model_family": "llama", "model_hash": _weight_identity(args.model, args.size, args.quantize),
@@ -172,6 +172,7 @@ def main() -> None:
       payload = json.loads(line)
       if payload.get("op") == "shutdown":
         hook_runtime.close()
+        kv.reset()
         return
       if payload.get("op") != "generate": raise ValueError("unsupported operation")
       request = payload["request"]
@@ -190,16 +191,10 @@ def main() -> None:
       if not messages or messages[-1].get("role") != "assistant": prompt += encode_role("assistant")
       if len(prompt) >= args.max_context: raise ValueError(f"prompt has {len(prompt)} tokens, max context is {args.max_context}")
 
-      if active_session != session_id:
-        active_session, cached_tokens = session_id, []
-      common = 0
-      for old, new in zip(cached_tokens, prompt):
-        if old != new: break
-        common += 1
-
+      common = kv.begin(session_id, prompt)
       prefill_context = ExecutionContext(ExecutionStage.PREFILL, batch_size=1, prompt_tokens=len(prompt),
         context_tokens=max(0, len(prompt)-1), generated_token_index=-1, prefix_reused_tokens=common,
-        tool_round=tool_round, warm=bool(cached_tokens), attributes={"resume_after_tool": resume_after_tool, "session_id": session_id})
+        tool_round=tool_round, warm=bool(kv.cached_tokens), attributes={"resume_after_tool": resume_after_tool, "session_id": session_id})
       _hook_event(hook_runtime, hooks, prefill_context)
 
       prefill_ids = list(prompt[common:-1])
@@ -208,7 +203,7 @@ def main() -> None:
       _, prefill_profile = _profiled(lambda: _prefill_without_output_head(model, prefill_ids, common, device))
       prefill_wall_ms = (time.perf_counter_ns() - prefill_start) / 1e6
       prefill_gpu_ms = GlobalCounters.time_sum_s * 1e3
-      cached_tokens = list(prompt[:-1])
+      kv.commit_prefill(prompt[:-1])
       send({"kind": "prefill", "metrics": {"wall_ms": prefill_wall_ms, "gpu_ms": prefill_gpu_ms,
             "prompt_tokens": len(prompt), "prefix_reused_tokens": common, "new_prompt_tokens": len(prefill_ids),
             "prefill_chunk_tokens": len(prefill_ids), "prefix_cache_hit_ratio": common / max(1, len(prompt)-1),
@@ -234,12 +229,12 @@ def main() -> None:
         tok, profile = _profiled(lambda: model(Tensor([[input_tok]], device=device), start_pos, temperature, 0, 0.0, 0.0, 0.0).item())
         wall_ms = (time.perf_counter_ns() - wall_start) / 1e6
         gpu_ms = GlobalCounters.time_sum_s * 1e3
-        cached_tokens.append(input_tok)  # this model invocation materialized input_tok's KV entry
+        kv.commit_decode_input(input_tok, start_pos)
         start_pos += 1
         last_tok = tok
         if tok in tokenizer.stop_tokens:
           send({"kind": "done", "finish_reason": "stop", "metrics": {"generated_tokens": generated,
-                "materialized_kv_tokens": len(cached_tokens)}})
+                "materialized_kv_tokens": len(kv.cached_tokens)}})
           break
         generated += 1
         send({"kind": "token", "text": tokenizer.decode([tok]), "metrics": {"index": index, "stage": stage.value,
@@ -253,7 +248,7 @@ def main() -> None:
                 "captured": emitted, "available": len(profile)}})
       else:
         send({"kind": "done", "finish_reason": "length", "metrics": {"generated_tokens": generated,
-              "materialized_kv_tokens": len(cached_tokens), "pending_uncached_output_token": True}})
+              "materialized_kv_tokens": len(kv.cached_tokens), "pending_uncached_output_token": True}})
     except Exception as exc:
       send({"kind": "error", "error": str(exc), "error_type": type(exc).__name__})
 
