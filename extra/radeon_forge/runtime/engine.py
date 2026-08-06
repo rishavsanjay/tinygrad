@@ -9,6 +9,7 @@ from ..permissions import PermissionController
 from ..profiling.report import build_profile_report
 from ..synthesis import CandidateWorkspace, HookRegistry, OptimizationTools, RuntimeFingerprint, install_default_specs
 from .backend import InferenceBackend
+from .jobs import LocalJobManager
 from .session import AgentSession
 from .tools import ToolCall, ToolRegistry, WorkspaceTools
 
@@ -30,6 +31,7 @@ class ForgeEngine:
     self.hooks = HookRegistry(self.optimization_workspace)
     self.optimization_tools = OptimizationTools(self.optimization_workspace, self.workspace, self.hooks, self.runtime_fingerprint)
     self.optimization_tools.install(self.tools)
+    self.jobs = LocalJobManager()
     self._sessions: dict[str, AgentSession] = {}
     self._lock = threading.RLock()
 
@@ -53,6 +55,17 @@ class ForgeEngine:
 
   def sessions(self) -> list[dict[str, Any]]:
     with self._lock: return [{"session_id": x.session_id, "state": x.state.value, "trace_id": x.trace.trace_id} for x in self._sessions.values()]
+
+  def submit_message(self, session_id: str, content: str, max_tokens: int = 512, temperature: float = 0.0) -> dict[str, Any]:
+    session = self.session(session_id)
+    job = self.jobs.submit("agent_turn", session_id, lambda: session.send(content, max_tokens, temperature))
+    return asdict(job)
+
+  def submit_tool_approval(self, session_id: str, reason: str, max_tokens: int = 512) -> dict[str, Any]:
+    session = self.session(session_id)
+    token = self.grant_for_pending_tool(session_id, reason)
+    job = self.jobs.submit("tool_and_resume", session_id, lambda: session.approve_tool(token, max_tokens))
+    return asdict(job)
 
   def grant_for_pending_tool(self, session_id: str, reason: str, max_uses: int = 1) -> str:
     session = self.session(session_id)
