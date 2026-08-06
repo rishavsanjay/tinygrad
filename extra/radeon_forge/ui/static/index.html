@@ -63,6 +63,10 @@
         <div class="kernel-layout">
           <div class="panel"><div class="panel-head"><div><h3>Typed kernel contracts</h3><p>Intent and invariants are durable; generated implementations are disposable.</p></div><button id="refresh-kernels" class="ghost">Refresh</button></div><div id="kernel-specs" class="kernel-list"></div></div>
           <div class="panel"><div class="panel-head"><div><h3>Candidate pipeline</h3><p>Staged → MockGPU → W7900 → accepted / rejected</p></div></div><div id="kernel-candidates" class="kernel-list"></div></div>
+          <div class="panel recipe-panel"><div class="panel-head"><div><h3>Portable optimization recipes</h3><p>Share intent, invariants, oracle, knowledge, and an optional disposable implementation cache in one file.</p></div></div>
+            <div class="recipe-import"><input id="recipe-path" placeholder="Path inside workspace, e.g. shared/decode.forge.toml"/><button id="import-recipe" class="primary">Import recipe</button></div>
+            <div id="recipe-list" class="kernel-list"></div>
+          </div>
         </div>
       </section>
     </main>
