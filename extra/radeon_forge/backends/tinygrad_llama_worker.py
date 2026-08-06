@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import argparse, json, sys, time
+import argparse, hashlib, json, sys, time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from tinygrad import Context, Device, GlobalCounters, Tensor
 from tinygrad.device import Compiled
 from tinygrad.nn.state import get_parameters
 from examples.llama3 import Tokenizer, build_transformer
+
+from ..synthesis.hooks import ExecutionContext, ExecutionStage
+from .stage_hooks import ModelStageHookRuntime
 
 
 MAX_PROFILE_EVENTS_PER_PHASE = 8192
@@ -76,6 +79,20 @@ def _emit_kernel_events(events: list[dict[str, Any]], *, stage: str, token_index
   return len(emitted), truncated
 
 
+def _model_identity(path: Path, size: str, quantize: str | None) -> str:
+  try:
+    stat = path.stat()
+    identity = f"{path.resolve()}:{stat.st_size}:{stat.st_mtime_ns}:{size}:{quantize}"
+  except OSError: identity = f"{path}:{size}:{quantize}"
+  return hashlib.sha256(identity.encode()).hexdigest()
+
+
+def _hook_event(runtime: ModelStageHookRuntime, hooks: list[Mapping[str, Any]], context: ExecutionContext) -> None:
+  result = runtime.apply(hooks, context)
+  if result.get("changed") or result.get("rolled_back"):
+    send({"kind": "hook", "metrics": {**result, "context": context.flattened()}})
+
+
 def main() -> None:
   parser = argparse.ArgumentParser(description="Persistent tinygrad Llama backend for Radeon Forge")
   parser.add_argument("--model", type=Path, required=True)
@@ -95,6 +112,9 @@ def main() -> None:
   device = Device.DEFAULT
   model = build_transformer(args.model, model_size=args.size, quantize=args.quantize, device=device, max_context=args.max_context)
   param_bytes = sum(x.nbytes() for x in get_parameters(model))
+  hook_runtime = ModelStageHookRuntime(model)
+  device_obj = Device[device]
+  architecture = str(getattr(device_obj, "arch", ""))
 
   def encode_role(role: str) -> list[int]:
     return [tokenizer.special_tokens["<|start_header_id|>"]] + tokenizer.encode(role) + [tokenizer.special_tokens["<|end_header_id|>"]] + tokenizer.encode("\n\n")
@@ -106,20 +126,30 @@ def main() -> None:
 
   active_session: str | None = None
   active_tokens: list[int] = []
-  send({"kind": "ready", "name": f"tinygrad-llama-{args.size}", "device": str(device), "model": str(args.model),
+  send({"kind": "ready", "name": f"tinygrad-llama-{args.size}", "device": str(device), "gpu": str(device),
+        "architecture": architecture, "runtime": "tinygrad", "runtime_revision": "radeon-forge",
+        "model": str(args.model), "model_family": "llama", "model_hash": _model_identity(args.model, args.size, args.quantize),
+        "dtype": args.quantize or "model_default", "shapes": {"batch": 1, "max_context": args.max_context},
         "parameter_bytes": param_bytes, "capabilities": {"streaming": True, "structured_tools": False,
         "prefix_cache": True, "persistent_kv": True, "kernel_metrics": True, "cancellation": False}})
 
   for line in sys.stdin:
     try:
       payload = json.loads(line)
-      if payload.get("op") == "shutdown": return
+      if payload.get("op") == "shutdown":
+        hook_runtime.close()
+        return
       if payload.get("op") != "generate": raise ValueError("unsupported operation")
       request = payload["request"]
+      metadata = request.get("metadata", {})
+      hooks = metadata.get("active_hooks", [])
+      if not isinstance(hooks, list): hooks = []
       session_id = str(request["session_id"])
       messages = request["messages"]
       max_tokens = max(1, min(int(request.get("max_tokens", 256)), args.max_context))
       temperature = float(request.get("temperature", 0.0))
+      tool_round = int(metadata.get("tool_round", 0))
+      resume_after_tool = bool(metadata.get("resume_after_tool", False))
 
       prompt = [tokenizer.bos_id]
       for message in messages: prompt += encode_message(message)
@@ -132,6 +162,11 @@ def main() -> None:
           if old != new: break
           common += 1
       active_session = session_id
+      prefill_context = ExecutionContext(ExecutionStage.PREFILL, batch_size=1, prompt_tokens=len(prompt),
+        context_tokens=max(0, len(prompt)-1), generated_token_index=-1, prefix_reused_tokens=common,
+        tool_round=tool_round, warm=bool(active_tokens), attributes={"resume_after_tool": resume_after_tool, "session_id": session_id})
+      _hook_event(hook_runtime, hooks, prefill_context)
+
       prefill_start = time.perf_counter_ns()
       prefill_gpu_s, prefill_kernels, prefill_mem, prefill_ops = 0.0, 0, 0, 0
       prefill_profile: list[dict[str, Any]] = []
@@ -149,7 +184,7 @@ def main() -> None:
       send({"kind": "prefill", "metrics": {"wall_ms": prefill_wall_ms, "gpu_ms": prefill_gpu_s * 1e3,
             "prompt_tokens": len(prompt), "prefix_reused_tokens": common, "new_prompt_tokens": max(0, len(prompt) - 1 - common),
             "kernel_count": prefill_kernels, "global_mem_bytes": prefill_mem, "global_ops": prefill_ops,
-            "profile_kernel_events": len(prefill_profile)}})
+            "profile_kernel_events": len(prefill_profile), "resume_after_tool": resume_after_tool}})
       prefill_truncated = len(prefill_profile) > MAX_PROFILE_EVENTS_PER_PHASE
       for sequence, event in enumerate(prefill_profile[:MAX_PROFILE_EVENTS_PER_PHASE]):
         send({"kind": "kernel", "metrics": {**event, "stage": "prefill", "sequence": sequence}})
@@ -160,6 +195,11 @@ def main() -> None:
       start_pos, last_tok = len(prompt) - 1, prompt[-1]
       generated = 0
       for index in range(max_tokens):
+        stage = ExecutionStage.FIRST_TOKEN if index == 0 else ExecutionStage.DECODE
+        decode_context = ExecutionContext(stage, batch_size=1, prompt_tokens=len(prompt), context_tokens=start_pos,
+          generated_token_index=index, prefix_reused_tokens=common, tool_round=tool_round, warm=True,
+          attributes={"resume_after_tool": resume_after_tool, "session_id": session_id})
+        _hook_event(hook_runtime, hooks, decode_context)
         GlobalCounters.reset()
         wall_start = time.perf_counter_ns()
         tok, profile = _profiled(lambda: model(Tensor([[last_tok]], device=device), start_pos, temperature, 0, 0.0, 0.0, 0.0).item())
@@ -172,13 +212,13 @@ def main() -> None:
           break
         active_tokens.append(tok)
         generated += 1
-        send({"kind": "token", "text": tokenizer.decode([tok]), "metrics": {"index": index, "wall_ms": wall_ms,
-              "gpu_ms": gpu_ms, "kernel_count": GlobalCounters.kernel_count, "global_mem_bytes": GlobalCounters.global_mem,
-              "global_ops": GlobalCounters.global_ops, "profile_kernel_events": len(profile),
-              "parameter_bandwidth_gbs": (param_bytes / max(GlobalCounters.time_sum_s, 1e-12)) / 1e9}})
-        emitted, truncated = _emit_kernel_events(profile, stage="decode", token_index=index)
+        send({"kind": "token", "text": tokenizer.decode([tok]), "metrics": {"index": index, "stage": stage.value,
+              "wall_ms": wall_ms, "gpu_ms": gpu_ms, "kernel_count": GlobalCounters.kernel_count,
+              "global_mem_bytes": GlobalCounters.global_mem, "global_ops": GlobalCounters.global_ops,
+              "profile_kernel_events": len(profile), "parameter_bandwidth_gbs": (param_bytes / max(GlobalCounters.time_sum_s, 1e-12)) / 1e9}})
+        emitted, truncated = _emit_kernel_events(profile, stage=stage.value, token_index=index)
         if truncated:
-          send({"kind": "metric", "metrics": {"name": "profile_truncated", "stage": "decode", "token_index": index,
+          send({"kind": "metric", "metrics": {"name": "profile_truncated", "stage": stage.value, "token_index": index,
                 "captured": emitted, "available": len(profile)}})
       else: send({"kind": "done", "finish_reason": "length", "metrics": {"generated_tokens": generated}})
     except Exception as exc:
