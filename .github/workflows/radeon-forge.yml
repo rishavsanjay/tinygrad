@@ -35,3 +35,5 @@ jobs:
           test.test_radeon_forge_hooks
           test.test_radeon_forge_autotune
           test.test_radeon_forge_kv
+          test.test_radeon_forge_tool_stream
+          test.test_radeon_forge_openai
