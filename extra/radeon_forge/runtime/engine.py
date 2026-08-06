@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import threading
+import threading, uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Mapping
@@ -10,7 +10,7 @@ from ..profiling.report import build_profile_report
 from ..synthesis import CandidateWorkspace, HookRegistry, OptimizationTools, RuntimeFingerprint, install_default_specs
 from .backend import InferenceBackend
 from .session import AgentSession
-from .tools import ToolRegistry, WorkspaceTools
+from .tools import ToolCall, ToolRegistry, WorkspaceTools
 
 
 DEFAULT_SYSTEM_PROMPT = """You are Radeon Forge, a private local software and inference performance engineer.
@@ -39,9 +39,6 @@ class ForgeEngine:
     return RuntimeFingerprint.from_mapping(metadata if isinstance(metadata, Mapping) else {})
 
   def _session_metadata(self, session: AgentSession, step: int) -> Mapping[str, Any]:
-    # Send every validated active hook to the isolated backend. The backend
-    # resolves execution-state predicates at prefill/first-token/decode/tool
-    # resume boundaries using live context that the outer agent cannot fake.
     return {**self.hooks.runtime_metadata(), "runtime_fingerprint": asdict(self.runtime_fingerprint())}
 
   def create_session(self) -> AgentSession:
@@ -62,6 +59,16 @@ class ForgeEngine:
     if session.pending_tool_call is None: raise RuntimeError("session has no pending tool")
     action = self.tools.spec(session.pending_tool_call.name).action
     return self.permissions.issue([action], reason, max_uses=max_uses).token
+
+  def execute_explicit_ui_tool(self, name: str, arguments: Mapping[str, Any], reason: str) -> Any:
+    """Execute one direct UI mutation through the same scoped permission boundary as the agent."""
+    spec = self.tools.spec(name)
+    grant = self.permissions.issue([spec.action], reason.strip() or f"Explicit local UI action: {name}", max_uses=1)
+    result = self.tools.execute(ToolCall(uuid.uuid4().hex, name, dict(arguments)), grant.token)
+    if not result.ok:
+      if isinstance(result.output, Mapping) and result.output.get("error"): raise RuntimeError(str(result.output["error"]))
+      raise RuntimeError(f"{name} failed")
+    return result.output
 
   def profile(self, session_id: str) -> dict[str, Any]: return build_profile_report(self.session(session_id).trace.events())
 
