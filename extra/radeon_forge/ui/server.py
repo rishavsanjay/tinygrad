@@ -6,7 +6,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from ..backends.fake import ScriptedBackend
 from ..runtime import ForgeEngine, JsonlProcessBackend
@@ -48,7 +48,7 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
     return self.engine.session(match.group(1)), match.group(2) or ""
 
   def do_GET(self):
-    path = urlparse(self.path).path
+    parsed, path = urlparse(self.path), urlparse(self.path).path
     try:
       if path == "/": return self._static("index.html")
       if path in {"/app.js", "/style.css", "/kernels.css"}: return self._static(path[1:])
@@ -56,9 +56,14 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
         "capabilities": asdict(self.engine.backend.capabilities), "runtime_fingerprint": asdict(self.engine.runtime_fingerprint())})
       if path == "/api/sessions": return self._json(self.engine.sessions())
       if path == "/api/optimization": return self._json(self.engine.optimization_state())
+      job_match = re.fullmatch(r"/api/jobs/([a-f0-9]+)", path)
+      if job_match: return self._json(asdict(self.engine.jobs.snapshot(job_match.group(1))))
       session, tail = self._session_route()
       if session is None: return self.send_error(404)
       if tail == "": return self._json(session.snapshot())
+      if tail == "events":
+        after = int(parse_qs(parsed.query).get("after", ["0"])[0])
+        return self._json({"events": session.events_after(after), "session": session.snapshot()})
       if tail == "profile": return self._json(self.engine.profile(session.session_id))
       if tail == "trace": return self._json(session.trace.to_dict())
       if tail == "trace/chrome": return self._json(session.trace.chrome_trace())
@@ -96,11 +101,19 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
       if tail == "messages":
         events = session.send(str(body.get("content", "")), int(body.get("max_tokens", 512)), float(body.get("temperature", 0.0)))
         return self._json({"events": [asdict(x) for x in events], "session": session.snapshot()})
+      if tail == "messages/async":
+        job = self.engine.submit_message(session.session_id, str(body.get("content", "")), int(body.get("max_tokens", 512)),
+                                         float(body.get("temperature", 0.0)))
+        return self._json({"job": job, "session": session.snapshot()}, HTTPStatus.ACCEPTED)
       if tail == "tools/approve":
         reason = str(body.get("reason", "Approved from Radeon Forge UI"))
         token = self.engine.grant_for_pending_tool(session.session_id, reason)
         events = session.approve_tool(token, int(body.get("max_tokens", 512)))
         return self._json({"events": [asdict(x) for x in events], "session": session.snapshot()})
+      if tail == "tools/approve/async":
+        job = self.engine.submit_tool_approval(session.session_id, str(body.get("reason", "Approved from Radeon Forge UI")),
+                                               int(body.get("max_tokens", 512)))
+        return self._json({"job": job, "session": session.snapshot()}, HTTPStatus.ACCEPTED)
       if tail == "tools/reject":
         event = session.reject_tool(str(body.get("reason", "Rejected by user")))
         return self._json({"event": asdict(event), "session": session.snapshot()})
