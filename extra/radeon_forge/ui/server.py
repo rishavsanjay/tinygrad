@@ -53,7 +53,7 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
       if path == "/": return self._static("index.html")
       if path in {"/app.js", "/style.css", "/kernels.css"}: return self._static(path[1:])
       if path == "/api/health": return self._json({"ok": True, "backend": self.engine.backend.name,
-                                                    "capabilities": asdict(self.engine.backend.capabilities)})
+        "capabilities": asdict(self.engine.backend.capabilities), "runtime_fingerprint": asdict(self.engine.runtime_fingerprint())})
       if path == "/api/sessions": return self._json(self.engine.sessions())
       if path == "/api/optimization": return self._json(self.engine.optimization_state())
       session, tail = self._session_route()
@@ -72,12 +72,25 @@ class ForgeRequestHandler(BaseHTTPRequestHandler):
       body = self._body()
       if path == "/api/sessions": return self._json(self.engine.create_session().snapshot(), HTTPStatus.CREATED)
       if path == "/api/recipes/import":
-        result = self.engine.optimization_tools.import_recipe({"path": str(body.get("path", ""))})
+        result = self.engine.execute_explicit_ui_tool("import_forge_recipe", {"path": str(body.get("path", ""))},
+          str(body.get("reason", "Import portable optimization recipe from local UI")))
         return self._json(result, HTTPStatus.CREATED)
       if path == "/api/recipes/export":
-        result = self.engine.optimization_tools.export_recipe_file({"spec_id": str(body.get("spec_id", "")),
-          "candidate_id": body.get("candidate_id"), "output": str(body.get("output", ""))})
+        result = self.engine.execute_explicit_ui_tool("export_forge_recipe", {"spec_id": str(body.get("spec_id", "")),
+          "candidate_id": body.get("candidate_id"), "output": str(body.get("output", ""))},
+          str(body.get("reason", "Export portable execution-stage optimization recipe")))
         return self._json(result, HTTPStatus.CREATED)
+      if path == "/api/hooks/activate":
+        result = self.engine.execute_explicit_ui_tool("activate_optimization_hook", {
+          "candidate_id": str(body.get("candidate_id", "")), "reason": str(body.get("reason", "Deploy validated stage-specific optimization")),
+          "allow_unknown_runtime": bool(body.get("allow_unknown_runtime", False))},
+          str(body.get("reason", "Deploy validated stage-specific optimization")))
+        return self._json(result, HTTPStatus.CREATED)
+      if path == "/api/hooks/deactivate":
+        result = self.engine.execute_explicit_ui_tool("deactivate_optimization_hook", {
+          "activation_id": str(body.get("activation_id", "")), "reason": str(body.get("reason", "Rollback local optimization hook"))},
+          str(body.get("reason", "Rollback local optimization hook")))
+        return self._json(result)
       session, tail = self._session_route()
       if session is None: return self.send_error(404)
       if tail == "messages":
