@@ -3,12 +3,12 @@ from __future__ import annotations
 import threading, uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 
 from ..permissions import PermissionController
 from ..profiling.report import build_profile_report
 from ..synthesis import CandidateWorkspace, OptimizationTools, RuntimeFingerprint, SafeHookRegistry, install_default_specs
-from .backend import InferenceBackend
+from .backend import GenerationEvent, GenerationRequest, InferenceBackend
 from .jobs import LocalJobManager
 from .session import AgentSession
 from .tools import ToolCall, ToolRegistry, WorkspaceTools
@@ -40,7 +40,7 @@ class ForgeEngine:
     if callable(metadata): metadata = metadata()
     return RuntimeFingerprint.from_mapping(metadata if isinstance(metadata, Mapping) else {})
 
-  def _session_metadata(self, session: AgentSession, step: int) -> Mapping[str, Any]:
+  def inference_metadata(self) -> dict[str, Any]:
     metadata = self.hooks.runtime_metadata()
     for item in metadata.get("active_hooks", []):
       try:
@@ -48,6 +48,16 @@ class ForgeEngine:
         item["parameters"] = dict(record.evidence.get("selected_parameters", {}))
       except Exception: item["parameters"] = {}
     return {**metadata, "runtime_fingerprint": asdict(self.runtime_fingerprint())}
+
+  def _session_metadata(self, session: AgentSession, step: int) -> Mapping[str, Any]: return self.inference_metadata()
+
+  def stream_inference(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]] = (),
+                       max_tokens: int = 256, temperature: float = 0.0, session_id: str | None = None,
+                       stop: Sequence[str] = ()) -> Iterator[GenerationEvent]:
+    """Serve the resident local model without losing Forge hooks or profiling events."""
+    request = GenerationRequest(session_id or uuid.uuid4().hex, tuple(messages), tuple(tools), max_tokens, temperature,
+                                tuple(stop), metadata=self.inference_metadata())
+    return self.backend.stream(request)
 
   def create_session(self) -> AgentSession:
     with self._lock:
