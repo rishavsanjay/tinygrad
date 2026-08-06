@@ -17,7 +17,9 @@ def install_default_specs(workspace: CandidateWorkspace) -> list[KernelSpec]:
       mockgpu_command=("python3", "{candidate}"), hardware_command=("python3", "{candidate}"),
       metadata={"seed":"extra/gemm/amd_asm_matmul.py", "role":"infrastructure and schedule-synthesis gate",
                 "hook":{"layer":"kernel", "target":"batch1_projection_gemm", "mode":"replace", "adapter":"request_metadata",
-                        "selector":{"program_name":"generated_gemm"}, "exclusive_group":"projection_gemm",
+                        "selector":{"program_name":"generated_gemm"},
+                        "when":{"stages":["prefill", "first_token", "decode"], "batch_sizes":[1]},
+                        "exclusive_group":"projection_gemm",
                         "description":"Validated kernel selection forwarded to a backend-specific kernel adapter."}},
     ),
     KernelSpec(
@@ -31,9 +33,10 @@ def install_default_specs(workspace: CandidateWorkspace) -> list[KernelSpec]:
       objective="minimize inter-token latency and kernel launches/token",
       metadata={"status":"oracle command must be bound after selecting the model", "role":"final technical target",
                 "hook":{"layer":"transformer_block", "target":"llama.decode.block", "mode":"replace",
-                        "adapter":"python_transformer_block", "selector":{"indices":"all", "phase":"decode"},
+                        "adapter":"python_transformer_block", "selector":{"indices":"all"},
+                        "when":{"stages":["decode"], "batch_sizes":[1], "min_generated_token_index":1},
                         "exclusive_group":"decode_transformer_block",
-                        "description":"Replace selected tinygrad Llama blocks inside the isolated model process."}},
+                        "description":"Replace selected tinygrad Llama blocks only during steady batch-one decode."}},
     ),
   ]
   existing = {x.spec_id for x in workspace.specs()}
