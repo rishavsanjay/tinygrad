@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+import threading, time, uuid
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+from typing import Any, Mapping
+
+from .backend import GenerationRequest, InferenceBackend
+from .events import TraceRecorder
+from .tools import ToolCall, ToolRegistry, parse_tool_call
+
+
+class SessionState(str, Enum):
+  IDLE = "idle"
+  GENERATING = "generating"
+  AWAITING_TOOL_APPROVAL = "awaiting_tool_approval"
+  RUNNING_TOOL = "running_tool"
+  COMPLETED = "completed"
+  FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class SessionEvent:
+  sequence: int
+  kind: str
+  data: Mapping[str, Any]
+  timestamp_s: float = field(default_factory=time.time)
+
+
+class AgentSession:
+  """Persistent private-agent session with explicit tool approval and full tracing."""
+  def __init__(self, backend: InferenceBackend, tools: ToolRegistry, system_prompt: str, session_id: str | None = None,
+               max_agent_steps: int = 8, trace: TraceRecorder | None = None):
+    self.session_id = session_id or uuid.uuid4().hex
+    self.backend, self.tools, self.system_prompt = backend, tools, system_prompt
+    self.max_agent_steps = max_agent_steps
+    self.trace = trace or TraceRecorder()
+    self.messages: list[dict[str, Any]] = [{"role": "system", "content": self._system_prompt()}]
+    self.events: list[SessionEvent] = []
+    self.pending_tool_call: ToolCall | None = None
+    self.state = SessionState.IDLE
+    self._sequence = 0
+    self._lock = threading.RLock()
+
+  def _system_prompt(self) -> str:
+    schemas = self.tools.schemas()
+    tool_text = "\n".join(f"- {x['function']['name']}: {x['function']['description']} schema={x['function']['parameters']}" for x in schemas)
+    return self.system_prompt.strip() + ("\n\nAvailable local tools:\n" + tool_text if schemas else "") + """
+
+Tool protocol: when a tool is required, output exactly one object wrapped as
+<tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+and no surrounding prose. Tool execution always requires user approval. Never
+claim a tool result before it is returned. All inference and tools are local.
+"""
+
+  def _emit(self, kind: str, **data: Any) -> SessionEvent:
+    self._sequence += 1
+    event = SessionEvent(self._sequence, kind, data)
+    self.events.append(event)
+    return event
+
+  def send(self, content: str, max_tokens: int = 512, temperature: float = 0.0) -> tuple[SessionEvent, ...]:
+    with self._lock:
+      if self.state in {SessionState.GENERATING, SessionState.RUNNING_TOOL}: raise RuntimeError("session is busy")
+      if self.pending_tool_call is not None: raise RuntimeError("approve or reject the pending tool call first")
+      text = content.strip()
+      if not text: raise ValueError("message must not be empty")
+      self.messages.append({"role": "user", "content": text})
+      self._emit("message", role="user", content=text)
+      return self._generate(max_tokens, temperature)
+
+  def _generate(self, max_tokens: int, temperature: float) -> tuple[SessionEvent, ...]:
+    self.state = SessionState.GENERATING
+    started_at = len(self.events)
+    pieces: list[str] = []
+    step = sum(1 for event in self.events if event.kind == "generation_started") + 1
+    if step > self.max_agent_steps: raise RuntimeError("agent step limit exceeded")
+    with self.trace.span("agent", "model_turn", session_id=self.session_id, step=step) as parent:
+      self._emit("generation_started", backend=self.backend.name, step=step, capabilities=asdict(self.backend.capabilities))
+      request = GenerationRequest(self.session_id, tuple(self.messages), tuple(self.tools.schemas()), max_tokens, temperature,
+                                  metadata={"trace_id": self.trace.trace_id, "step": step})
+      try:
+        for event in self.backend.stream(request):
+          if event.kind == "token":
+            pieces.append(event.text)
+            self._emit("token", text=event.text, metrics=dict(event.metrics))
+            self.trace.point("inference", "token", parent.event_id, text=event.text, **dict(event.metrics))
+          elif event.kind in {"prefill", "decode", "kernel", "metric"}:
+            self._emit(event.kind, **dict(event.metrics))
+            self.trace.point("inference", event.kind, parent.event_id, **dict(event.metrics))
+          elif event.kind == "tool_call" and event.tool_call is not None:
+            self.pending_tool_call = ToolCall(str(event.tool_call.get("id") or uuid.uuid4().hex), str(event.tool_call["name"]), event.tool_call.get("arguments", {}))
+          elif event.kind == "done": self._emit("generation_done", finish_reason=event.finish_reason, metrics=dict(event.metrics))
+      except Exception as exc:
+        self.state = SessionState.FAILED
+        self._emit("error", error=str(exc), error_type=type(exc).__name__)
+        raise
+    output = "".join(pieces)
+    if self.pending_tool_call is None:
+      try: self.pending_tool_call = parse_tool_call(output)
+      except Exception as exc: self._emit("tool_parse_error", error=str(exc), raw=output)
+    if self.pending_tool_call is not None:
+      self.state = SessionState.AWAITING_TOOL_APPROVAL
+      self._emit("tool_approval_required", call=asdict(self.pending_tool_call), action=self.tools.spec(self.pending_tool_call.name).action.value)
+    else:
+      self.messages.append({"role": "assistant", "content": output})
+      self.state = SessionState.COMPLETED
+      self._emit("message", role="assistant", content=output)
+    return tuple(self.events[started_at:])
+
+  def approve_tool(self, permission_token: str, max_tokens: int = 512) -> tuple[SessionEvent, ...]:
+    with self._lock:
+      if self.state is not SessionState.AWAITING_TOOL_APPROVAL or self.pending_tool_call is None: raise RuntimeError("no tool call awaits approval")
+      call = self.pending_tool_call
+      started_at = len(self.events)
+      self.state = SessionState.RUNNING_TOOL
+      with self.trace.span("tool", call.name, call_id=call.call_id) as span:
+        self._emit("tool_started", call=asdict(call))
+        result = self.tools.execute(call, permission_token)
+        self.trace.point("tool", "tool_result", span.event_id, ok=result.ok, elapsed_ms=result.elapsed_ms)
+      self._emit("tool_result", result=asdict(result))
+      self.messages.append({"role": "assistant", "content": f"<tool_call>{{\"name\":\"{call.name}\"}}</tool_call>"})
+      self.messages.append({"role": "tool", "name": call.name, "tool_call_id": call.call_id, "content": str(result.output)})
+      self.pending_tool_call = None
+      if not result.ok:
+        self.state = SessionState.FAILED
+        return tuple(self.events[started_at:])
+      self.state = SessionState.IDLE
+      self._generate(max_tokens, 0.0)
+      return tuple(self.events[started_at:])
+
+  def reject_tool(self, reason: str) -> SessionEvent:
+    with self._lock:
+      if self.pending_tool_call is None: raise RuntimeError("no pending tool call")
+      call = self.pending_tool_call
+      self.pending_tool_call = None
+      self.messages.append({"role": "tool", "name": call.name, "tool_call_id": call.call_id, "content": f"User rejected tool call: {reason}"})
+      self.state = SessionState.IDLE
+      return self._emit("tool_rejected", call_id=call.call_id, reason=reason)
+
+  def snapshot(self) -> dict[str, Any]:
+    return {"session_id": self.session_id, "state": self.state.value, "messages": list(self.messages),
+            "events": [asdict(x) for x in self.events], "pending_tool_call": asdict(self.pending_tool_call) if self.pending_tool_call else None,
+            "trace_id": self.trace.trace_id}
