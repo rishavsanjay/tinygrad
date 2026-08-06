@@ -8,7 +8,7 @@ from typing import Any, Callable, Mapping
 from ..oracles.mockgpu import MockGPUOracle
 from ..permissions import Action
 from ..runtime.tools import ToolRegistry, ToolSpec
-from .hooks import HookRegistry, RuntimeFingerprint
+from .hooks import HookRegistry, RuntimeFingerprint, check_compatibility
 from .portable import export_recipe_with_hook
 from .recipe import RecipeLibrary
 from .workspace import CandidateWorkspace
@@ -109,10 +109,16 @@ class OptimizationTools:
 
   def activate_hook(self, args: Mapping[str, Any]) -> Any:
     if self.hooks is None: raise RuntimeError("hook registry is unavailable")
+    candidate = self.workspace.load_candidate(str(args["candidate_id"]))
+    spec = self.workspace.load_spec(candidate.spec_id)
     fingerprint = self._fingerprint()
-    if not fingerprint.architecture and not bool(args.get("allow_unknown_runtime", False)):
-      raise ValueError("runtime architecture is unknown; start the real local model backend before deployment")
-    active = self.hooks.activate(str(args["candidate_id"]), fingerprint,
+    allow_unknown = bool(args.get("allow_unknown_runtime", False))
+    report = check_compatibility(spec, fingerprint)
+    if report.mismatches: raise ValueError("runtime is incompatible: " + "; ".join(report.mismatches))
+    if report.unknown and not allow_unknown:
+      raise ValueError("runtime compatibility is incomplete: missing " + ", ".join(report.unknown) +
+                       ". Regenerate locally or explicitly approve an unknown-runtime deployment.")
+    active = self.hooks.activate(candidate.candidate_id, fingerprint,
                                  str(args.get("reason", "Approved stage-specific local deployment")))
     return asdict(active)
 
