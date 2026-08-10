@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, ctypes, functools, mmap, struct, array, math, sys, weakref, contextlib
+import os, ctypes, functools, mmap, struct, array, math, sys, weakref, contextlib, time
 assert sys.platform != 'win32'
 from typing import Any, cast
 from tinygrad.device import BufferSpec, Device, TinyELF
@@ -52,9 +52,10 @@ class QCOMSignal(HCQSignal):
   def __init__(self, *args, **kwargs): super().__init__(*args, **{**kwargs, 'timestamp_divider': 19.2})
 
   def _sleep(self, time_spent_since_last_sleep_ms:int):
-    # Sleep only for timeline signals. Do it immediately to free cpu.
-    if self.is_timeline and self.owner is not None:
+    if self.owner is not None and self.owner.gen == 6 and self.is_timeline:
       kgsl.IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID(self.owner.fd, context_id=self.owner.ctx, timestamp=self.owner.last_cmd, timeout=0xffffffff)
+    elif self.owner is not None and self.owner.gen == 8:
+      time.sleep(0.001)
 
 class QCOMComputeQueue(HWQueue):
   def __init__(self, dev:QCOMDevice):
@@ -70,9 +71,12 @@ class QCOMComputeQueue(HWQueue):
   def reg(self, reg: int, *vals: int): self.q(pkt4_hdr(reg, len(vals)), *vals)
 
   def _cache_flush(self, write_back=True, invalidate=False, sync=True, memsync=False):
-    # TODO: 7xx support.
-    if write_back: self.cmd(mesa.CP_EVENT_WRITE, mesa.CACHE_FLUSH_TS, *data64_le(self.dev.dummy_addr), 0) # dirty cache write-back.
-    if invalidate: self.cmd(mesa.CP_EVENT_WRITE, mesa.CACHE_INVALIDATE) # invalidate cache lines (following reads from RAM).
+    if self.dev.gen == 6:
+      if write_back: self.cmd(mesa.CP_EVENT_WRITE, qreg.cp_event_write_0(event=mesa.CACHE_FLUSH_TS), *data64_le(self.dev.dummy_addr), 0)
+      if invalidate: self.cmd(mesa.CP_EVENT_WRITE, qreg.cp_event_write_0(event=mesa.CACHE_INVALIDATE))
+    else:
+      if write_back: self.cmd(mesa.CP_EVENT_WRITE7, qreg.cp_event_write7_0(event=mesa.CACHE_FLUSH7))
+      if invalidate: self.cmd(mesa.CP_EVENT_WRITE7, qreg.cp_event_write7_0(event=mesa.CACHE_INVALIDATE7))
     if memsync: self.cmd(mesa.CP_WAIT_MEM_WRITES)
     if sync: self.cmd(mesa.CP_WAIT_FOR_IDLE)
 
@@ -82,17 +86,19 @@ class QCOMComputeQueue(HWQueue):
 
   def signal(self, signal:QCOMSignal, value=0):
     self.cmd(mesa.CP_WAIT_FOR_IDLE)
-    if self.dev.gpu_id[:2] < (7, 3):
+    if self.dev.gen == 6:
       self.cmd(mesa.CP_EVENT_WRITE, qreg.cp_event_write_0(event=mesa.CACHE_FLUSH_TS), *data64_le(signal.value_addr), lo32(value))
-      self._cache_flush(write_back=True, invalidate=False, sync=False, memsync=False)
     else:
-      # TODO: support devices starting with 8 Gen 1. Also, 700th series have convenient CP_GLOBAL_TIMESTAMP and CP_LOCAL_TIMESTAMP
-      raise RuntimeError('CP_EVENT_WRITE7 is not supported')
+      self.cmd(mesa.CP_EVENT_WRITE7, qreg.cp_event_write7_0(event=mesa.CACHE_FLUSH_TS, write_src=mesa.EV_WRITE_USER_32B,
+                                                            write_dst=mesa.EV_DST_RAM, write_enabled=True),
+               *data64_le(signal.value_addr), lo32(value))
+    if self.dev.gen == 6: self._cache_flush(write_back=True, invalidate=False, sync=False, memsync=False)
     return self
 
   def timestamp(self, signal:QCOMSignal):
     self.cmd(mesa.CP_WAIT_FOR_IDLE)
-    self.cmd(mesa.CP_REG_TO_MEM, qreg.cp_reg_to_mem_0(reg=mesa.REG_A6XX_CP_ALWAYS_ON_COUNTER, cnt=2, _64b=True),*data64_le(signal.timestamp_addr))
+    reg = mesa.REG_A8XX_CP_ALWAYS_ON_COUNTER if self.dev.gen == 8 else mesa.REG_A6XX_CP_ALWAYS_ON_COUNTER
+    self.cmd(mesa.CP_REG_TO_MEM, qreg.cp_reg_to_mem_0(reg=reg, cnt=2, _64b=True),*data64_le(signal.timestamp_addr))
     return self
 
   def wait(self, signal:QCOMSignal, value=0):
@@ -117,52 +123,102 @@ class QCOMComputeQueue(HWQueue):
   def _submit(self, dev:QCOMDevice):
     if self.binded_device == dev: submit_req = self.submit_req
     else: submit_req, _ = self._build_gpu_command(dev)
-    dev.last_cmd = kgsl.IOCTL_KGSL_GPU_COMMAND(dev.fd, __payload=submit_req).timestamp
+    timestamp = kgsl.IOCTL_KGSL_GPU_COMMAND(dev.fd, __payload=submit_req).timestamp
+    if dev.gen == 6: dev.last_cmd = timestamp
 
   def exec(self, prg:QCOMProgram, args_state:QCOMArgsState, global_size, local_size):
     self.bind_args_state(args_state)
 
     def cast_int(x, ceil=False): return (math.ceil(x) if ceil else int(x)) if isinstance(x, float) else x
     global_size_mp = [cast_int(g*l) for g,l in zip(global_size, local_size)]
+    group_counts = tuple(cast_int(g, ceil=True) for g in global_size) if self.dev.gen == 8 else ()
 
-    self.cmd(mesa.CP_SET_MARKER, qreg.a6xx_cp_set_marker_0(mode=mesa.RM6_COMPUTE))
-    self.reg(mesa.REG_A6XX_SP_UPDATE_CNTL, qreg.a6xx_sp_update_cntl(cs_state=True, cs_uav=True))
-    self.reg(mesa.REG_A6XX_SP_UPDATE_CNTL, 0x0)
-    self.reg(mesa.REG_A6XX_SP_CS_TSIZE, qreg.a6xx_sp_cs_tsize(0x80)) # is this right? mesa uses 1
-    self.reg(mesa.REG_A6XX_SP_CS_USIZE, qreg.a6xx_sp_cs_usize(0x40)) # mesa also uses 1
-    self.reg(mesa.REG_A6XX_SP_MODE_CNTL, qreg.a6xx_sp_mode_cntl(isammode=mesa.ISAMMODE_GL if prg.NIR else mesa.ISAMMODE_CL,
-                                                                constant_demotion_enable=prg.NIR))
-    self.reg(mesa.REG_A6XX_SP_PERFCTR_SHADER_MASK, qreg.a6xx_sp_perfctr_shader_mask(cs=True))
-    self.reg(mesa.REG_A6XX_TPL1_MODE_CNTL, qreg.a6xx_tpl1_mode_cntl(isammode=mesa.ISAMMODE_GL if prg.NIR else mesa.ISAMMODE_CL))
-    self.reg(mesa.REG_A6XX_TPL1_DBG_ECO_CNTL, 0)
+    if self.dev.gen == 6:
+      self.cmd(mesa.CP_SET_MARKER, qreg.a6xx_cp_set_marker_0(mode=mesa.RM6_COMPUTE))
+      self.reg(mesa.REG_A6XX_SP_UPDATE_CNTL, qreg.a6xx_sp_update_cntl(cs_state=True, cs_uav=True))
+      self.reg(mesa.REG_A6XX_SP_UPDATE_CNTL, 0)
+      self.reg(mesa.REG_A6XX_SP_CS_TSIZE, qreg.a6xx_sp_cs_tsize(0x80)) # is this right? mesa uses 1
+      self.reg(mesa.REG_A6XX_SP_CS_USIZE, qreg.a6xx_sp_cs_usize(0x40)) # mesa also uses 1
+      self.reg(mesa.REG_A6XX_SP_MODE_CNTL, qreg.a6xx_sp_mode_cntl(isammode=mesa.ISAMMODE_GL if prg.NIR else mesa.ISAMMODE_CL,
+                                                                  constant_demotion_enable=prg.NIR))
+      self.reg(mesa.REG_A6XX_SP_PERFCTR_SHADER_MASK, qreg.a6xx_sp_perfctr_shader_mask(cs=True))
+      self.reg(mesa.REG_A6XX_TPL1_MODE_CNTL, qreg.a6xx_tpl1_mode_cntl(isammode=mesa.ISAMMODE_GL if prg.NIR else mesa.ISAMMODE_CL))
+      self.reg(mesa.REG_A6XX_TPL1_DBG_ECO_CNTL, 0)
+    else:
+      self.cmd(mesa.CP_SET_MARKER, qreg.a8xx_cp_set_marker_0(mode=mesa.RM6_COMPUTE))
+      self.reg(mesa.REG_A8XX_SP_UPDATE_CNTL,
+               qreg.a8xx_sp_update_cntl(vs_state=True, hs_state=True, ds_state=True, gs_state=True, fs_state=True, cs_state=True))
+      self.reg(mesa.REG_A8XX_SP_UPDATE_CNTL, 0)
+      self.reg(mesa.REG_A6XX_SP_MODE_CNTL, qreg.a6xx_sp_mode_cntl(isammode=mesa.ISAMMODE_GL, constant_demotion_enable=True))
     self.cmd(mesa.CP_WAIT_FOR_IDLE)
 
-    self.reg(mesa.REG_A6XX_SP_CS_NDRANGE_0,
-             qreg.a6xx_sp_cs_ndrange_0(kerneldim=3, localsizex=local_size[0] - 1, localsizey=local_size[1] - 1, localsizez=local_size[2] - 1),
-             global_size_mp[0], 0, global_size_mp[1], 0, global_size_mp[2], 0, 0xccc0cf, 0xfc | qreg.a6xx_sp_cs_wge_cntl(threadsize=mesa.THREAD64),
-             cast_int(global_size[0], ceil=True), cast_int(global_size[1], ceil=True), cast_int(global_size[2], ceil=True))
+    # Oversized compute shaders need both instruction-length contexts to match.
+    # https://gitlab.freedesktop.org/mesa/mesa/-/blob/6dfbc555b4128ee51139c5f78c5aba2594c9701b/src/freedreno/vulkan/tu_cmd_buffer.cc#L9148
+    if self.dev.gen == 8 and prg.instrlen > self.dev.dev_info.props.instr_cache_size:
+      self.reg(mesa.REG_A6XX_SP_PS_INSTR_SIZE, qreg.a6xx_sp_ps_instr_size(prg.instrlen))
+      self.cmd(mesa.CP_EVENT_WRITE7, qreg.cp_event_write7_0(event=mesa.DEBUG_LABEL))
 
-    self.reg(mesa.REG_A6XX_SP_CS_CNTL_0,
-             qreg.a6xx_sp_cs_cntl_0(threadsize=mesa.THREAD64, halfregfootprint=prg.hregs, fullregfootprint=prg.fregs, branchstack=prg.brnchstck),
-             qreg.a6xx_sp_cs_cntl_1(constantrammode=mesa.CONSTLEN_256, shared_size=prg.shared_size), # should this be CONSTLEN_512?
+    if self.dev.gen == 6:
+      self.reg(mesa.REG_A6XX_SP_CS_NDRANGE_0,
+               qreg.a6xx_sp_cs_ndrange_0(kerneldim=3, localsizex=local_size[0] - 1, localsizey=local_size[1] - 1, localsizez=local_size[2] - 1),
+               global_size_mp[0], 0, global_size_mp[1], 0, global_size_mp[2], 0, 0xccc0cf,
+               0xfc | qreg.a6xx_sp_cs_wge_cntl(threadsize=mesa.THREAD64),
+               cast_int(global_size[0], ceil=True), cast_int(global_size[1], ceil=True), cast_int(global_size[2], ceil=True))
+    else:
+      # A8xx reuses the A7xx compute layouts; tile height follows local Y divisibility.
+      # https://gitlab.freedesktop.org/mesa/mesa/-/blob/6dfbc555b4128ee51139c5f78c5aba2594c9701b/src/freedreno/computerator/a6xx.cc#L218
+      if isinstance(local_y:=local_size[1], int): tile_height = 1 + 16 // math.gcd(local_y, 8)
+      else: tile_height = (local_y % 8).ne(0).where((local_y % 4).ne(0).where((local_y % 2).ne(0).where(17, 9), 5), 3)
+      self.reg(mesa.REG_A7XX_SP_CS_NDRANGE_0,
+               qreg.a7xx_sp_cs_ndrange_0(kerneldim=3, localsizex=local_size[0] - 1, localsizey=local_size[1] - 1, localsizez=local_size[2] - 1),
+               global_size_mp[0], 0, global_size_mp[1], 0, global_size_mp[2], 0)
+      self.reg(mesa.REG_A7XX_SP_CS_WGE_CNTL,
+               qreg.a7xx_sp_cs_wge_cntl(linearlocalidregid=0xfc, threadsize=prg.threadsize,
+                                        workgrouprastorderzfirsten=True, wgtilewidth=4, wgtileheight=tile_height))
+      self.reg(mesa.REG_A7XX_SP_CS_KERNEL_GROUP_X, *group_counts)
+      self.reg(mesa.REG_A7XX_SP_CS_NDRANGE_7,
+               qreg.a7xx_sp_cs_ndrange_7(localsizex=local_size[0] - 1, localsizey=local_size[1] - 1, localsizez=local_size[2] - 1))
+
+    if self.dev.gen == 6:
+      cs_cntl_0 = qreg.a6xx_sp_cs_cntl_0(threadsize=mesa.THREAD64, halfregfootprint=prg.hregs, fullregfootprint=prg.fregs,
+                                         branchstack=prg.brnchstck)
+      pvt_mem_size_reg = qreg.a6xx_sp_cs_pvt_mem_size(totalpvtmemsize=prg.pvtmem_size_total)
+    else:
+      cs_cntl_0 = qreg.a6xx_sp_cs_cntl_0(threadsize=prg.threadsize, halfregfootprint=prg.hregs, fullregfootprint=prg.fregs,
+                                         branchstack=prg.brnchstck, earlypreamble=prg.early_preamble, mergedregs=prg.mergedregs)
+      pvt_mem_size_reg = qreg.a6xx_sp_cs_pvt_mem_size(totalpvtmemsize=prg.pvtmem_size_total, perwavememlayout=prg.pvtmem_per_wave)
+    self.reg(mesa.REG_A6XX_SP_CS_CNTL_0, cs_cntl_0,
+             qreg.a6xx_sp_cs_cntl_1(constantrammode=prg.const_ram_mode if self.dev.gen == 8 else mesa.CONSTLEN_256,
+                                    shared_size=prg.shared_size),
              0, prg.prg_offset, *data64_le(prg.lib_gpu.va_addr),
-             qreg.a6xx_sp_cs_pvt_mem_param(memsizeperitem=prg.pvtmem_size_per_item), *data64_le(prg.dev._stack.va_addr),
-             qreg.a6xx_sp_cs_pvt_mem_size(totalpvtmemsize=prg.pvtmem_size_total))
+             qreg.a6xx_sp_cs_pvt_mem_param(memsizeperitem=prg.pvtmem_size_per_item), *data64_le(prg.dev._stack.va_addr), pvt_mem_size_reg)
+
+    if self.dev.gen == 8: self.reg(mesa.REG_A7XX_SP_CS_VGS_CNTL, 0)
 
     if prg.NIR and prg.wgsz != 0xfc: to_mv(int(args_state.buf.va_addr) + prg.wgsz * 4, 12)[:] = struct.pack("III", *local_size)
+    # A8xx constant-state loads count vec4s; A6xx loads count dwords.
     self.cmd(mesa.CP_LOAD_STATE6_FRAG, qreg.cp_load_state6_0(state_type=mesa.ST_CONSTANTS, state_src=mesa.SS6_INDIRECT,
-                                                             state_block=mesa.SB6_CS_SHADER, num_unit=1024 // 4),
+                                                             state_block=mesa.SB6_CS_SHADER,
+                                                             num_unit=1024 // (16 if self.dev.gen == 8 else 4)),
              *data64_le(args_state.buf.va_addr))
+    # Preload only the portion of the shader that fits in the instruction cache.
+    # https://gitlab.freedesktop.org/mesa/mesa/-/blob/6dfbc555b4128ee51139c5f78c5aba2594c9701b/src/freedreno/computerator/a6xx.cc#L279
+    shader_units = min(prg.instrlen, self.dev.dev_info.props.instr_cache_size) if self.dev.gen == 8 else round_up(prg.image_size, 128) // 128
     self.cmd(mesa.CP_LOAD_STATE6_FRAG, qreg.cp_load_state6_0(state_type=mesa.ST_SHADER, state_src=mesa.SS6_INDIRECT,
-                                                             state_block=mesa.SB6_CS_SHADER, num_unit=ceildiv(prg.image_size, 128)),
+                                                             state_block=mesa.SB6_CS_SHADER, num_unit=shader_units),
              *data64_le(prg.lib_gpu.va_addr))
 
-    self.reg(mesa.REG_A6XX_SP_REG_PROG_ID_0, 0xfcfcfcfc, 0xfcfcfcfc, 0xfcfcfcfc, 0xfc, qreg.a6xx_sp_cs_const_config(constlen=1024 // 4, enabled=True))
+    if self.dev.gen == 6:
+      self.reg(mesa.REG_A6XX_SP_REG_PROG_ID_0, 0xfcfcfcfc, 0xfcfcfcfc, 0xfcfcfcfc, 0xfc,
+               qreg.a6xx_sp_cs_const_config(constlen=1024 // 4, enabled=True))
+    else:
+      self.reg(mesa.REG_A7XX_SP_REG_PROG_ID_0, 0xfcfcfcfc, 0xfcfcfcfc, 0xfcfcfcfc, 0xfc00)
+      self.reg(mesa.REG_A7XX_SP_CS_CONST_CONFIG, qreg.a7xx_sp_cs_const_config(constlen=prg.constlen_units, enabled=True))
 
     self.reg(mesa.REG_A6XX_SP_CS_PVT_MEM_STACK_OFFSET, qreg.a6xx_sp_cs_pvt_mem_stack_offset(prg.hw_stack_offset))
     # image_size is in bytes, but INSTR_SIZE is measured in units of instruction groups (16 instructions, 8 bytes each)
     # https://elixir.bootlin.com/mesa/mesa-26.1.5/source/src/freedreno/ir3/ir3_shader.h#L719-L723
-    self.reg(mesa.REG_A6XX_SP_CS_INSTR_SIZE, qreg.a6xx_sp_cs_instr_size(ceildiv(prg.image_size, 128)))
+    self.reg(mesa.REG_A6XX_SP_CS_INSTR_SIZE, qreg.a6xx_sp_cs_instr_size(ceildiv(prg.image_size, 128) if self.dev.gen == 6 else prg.instrlen))
 
     if prg.samp_cnt > 0:
       self.cmd(mesa.CP_LOAD_STATE6_FRAG, qreg.cp_load_state6_0(state_type=mesa.ST_SHADER, state_src=mesa.SS6_INDIRECT,
@@ -186,10 +242,24 @@ class QCOMComputeQueue(HWQueue):
     self.reg(mesa.REG_A6XX_SP_CS_CONFIG,
              qreg.a6xx_sp_cs_config(enabled=True, nsamp=args_state.prg.samp_cnt, ntex=args_state.prg.tex_cnt, nuav=args_state.prg.ibo_cnt))
 
-    if prg.NIR:
+    # https://gitlab.freedesktop.org/mesa/mesa/-/blob/6dfbc555b4128ee51139c5f78c5aba2594c9701b/src/freedreno/vulkan/tu_shader.cc#L1962-1975
+    if self.dev.gen == 8:
+      self.reg(mesa.REG_A7XX_SP_PS_WAVE_CNTL, qreg.a7xx_sp_ps_wave_cntl(threadsize=mesa.THREAD64))
+      self.reg(mesa.REG_A6XX_SP_CS_WIE_CNTL_0,
+               qreg.a6xx_sp_cs_wie_cntl_0(wgidconstid=prg.wgid, wgsizeconstid=prg.wgsz, wgoffsetconstid=0xfc, localidregid=prg.lid))
+      self.reg(mesa.REG_A7XX_SP_CS_WIE_CNTL_1,
+               qreg.a7xx_sp_cs_wie_cntl_1(linearlocalidregid=0xfc, threadsize=prg.threadsize,
+                                          workitemrastorder=mesa.WORKITEMRASTORDER_LINEAR))
+      self.reg(mesa.REG_A8XX_SP_CS_HYSTERESIS, 0)
+    elif prg.NIR:
       self.reg(mesa.REG_A6XX_SP_CS_CONST_CONFIG_0,
                qreg.a6xx_sp_cs_const_config_0(wgidconstid=prg.wgid, wgsizeconstid=prg.wgsz, wgoffsetconstid=0xfc, localidregid=prg.lid),
                qreg.a6xx_sp_cs_wge_cntl(linearlocalidregid=0xfc, threadsize=mesa.THREAD64))
+
+    if prg.NIR and self.dev.gen == 8:
+      self.cmd(mesa.CP_EXEC_CS, 0, qreg.cp_exec_cs_1(ngroups_x=group_counts[0]),
+               qreg.cp_exec_cs_2(ngroups_y=group_counts[1]), qreg.cp_exec_cs_3(_ngroups_z=group_counts[2]))
+    elif prg.NIR:
       self.cmd(mesa.CP_EXEC_CS, 0,
                qreg.cp_exec_cs_1(ngroups_x=global_size[0]), qreg.cp_exec_cs_2(ngroups_y=global_size[1]), qreg.cp_exec_cs_3(_ngroups_z=global_size[2]))
     else: self.cmd(mesa.CP_RUN_OPENCL, 0)
@@ -239,7 +309,16 @@ class QCOMProgram(HCQProgram['QCOMDevice']):
     if self.NIR:
       from tinygrad.runtime.support.compiler_mesa import IR3Compiler
       v, cs, imm_vals, self.image = IR3Compiler.unpack_lib(obj.lib)
-      self.prg_offset, self.brnchstck, self.image_size, self.pvtmem, self.shmem = 0, v.branchstack, v.info.size, v.pvtmem_size, v.shared_size
+      self.prg_offset, self.brnchstck, self.image_size = 0, round_up(min(v.branchstack, 64), 2) if dev.gen == 8 else v.branchstack, v.info.size
+      self.pvtmem, self.shmem = v.pvtmem_size, v.shared_size
+      if dev.gen == 8:
+        self.pvtmem_per_wave, self.early_preamble, self.mergedregs = v.pvtmem_per_wave, v.early_preamble, v.mergedregs
+        self.instrlen, self.threadsize = v.instrlen, mesa.THREAD128 if v.info.double_threadsize else mesa.THREAD64
+        # Select the smallest constant RAM mode that contains the shader constants.
+        # https://gitlab.freedesktop.org/mesa/mesa/-/blob/6dfbc555b4128ee51139c5f78c5aba2594c9701b/src/freedreno/computerator/a6xx.cc#L191
+        self.constlen_units = round_up(v.constlen, 4) // 4
+        self.const_ram_mode = mesa.CONSTLEN_512 if v.constlen > 256 else mesa.CONSTLEN_256 if v.constlen > 192 else \
+          mesa.CONSTLEN_192 if v.constlen > 128 else mesa.CONSTLEN_128
       self.wgsz = alloc.offset_vec4 * 4 + 8 if (alloc:=cs.allocs.consts[mesa.IR3_CONST_ALLOC_DRIVER_PARAMS]).size_vec4 else 0xfc
 
       self.wgid, self.lid = v.cs.work_group_id, v.cs.local_invocation_id # register ids
@@ -261,23 +340,40 @@ class QCOMProgram(HCQProgram['QCOMDevice']):
     self.lib_gpu: HCQBuffer = self.dev.allocator.alloc(self.image_size, buf_spec:=BufferSpec(cpu_access=True, nolru=True))
     to_mv(self.lib_gpu.va_addr, self.image_size)[:] = self.image
 
-    self.pvtmem_size_per_item: int = round_up(self.pvtmem, 512) >> 9
-    self.pvtmem_size_total: int = self.pvtmem_size_per_item * 128 * 2
-    self.hw_stack_offset: int = round_up(next_power2(round_up(self.pvtmem, 512)) * 128 * 16, 0x1000)
-    self.shared_size: int = max(1, (self.shmem - 1) // 1024)
-    self.max_threads = min(1024, ((384 * 32) // (max(1, (self.fregs + round_up(self.hregs, 2) // 2)) * 128)) * 128)
-    dev._ensure_stack_size(self.hw_stack_offset * 4)
+    if dev.gen == 8 and not 0 <= self.shmem <= 32 << 10: raise RuntimeError(f"Invalid shared-memory size {self.shmem}")
+    self.shared_size = max(1, (self.shmem - 1) // 1024)
+    if dev.gen == 6:
+      self.pvtmem_size_per_item = round_up(self.pvtmem, 512) >> 9
+      self.pvtmem_size_total = self.pvtmem_size_per_item * 128 * 2
+      self.hw_stack_offset = round_up(next_power2(round_up(self.pvtmem, 512)) * 128 * 16, 0x1000)
+      self.max_threads = min(1024, ((384 * 32) // (max(1, (self.fregs + round_up(self.hregs, 2) // 2)) * 128)) * 128)
+      dev._ensure_stack_size(self.hw_stack_offset * 4)
+    else:
+      # Private memory is allocated per SP across all resident fibers.
+      # https://gitlab.freedesktop.org/mesa/mesa/-/blob/6dfbc555b4128ee51139c5f78c5aba2594c9701b/src/freedreno/computerator/a6xx.cc#L261
+      pvtmem_per_fiber = round_up(self.pvtmem, 512)
+      pvtmem_per_sp = round_up(pvtmem_per_fiber * dev.dev_info.fibers_per_sp, 0x1000)
+      self.pvtmem_size_per_item = pvtmem_per_fiber >> 9
+      self.pvtmem_size_total = pvtmem_per_sp >> 12
+      self.hw_stack_offset = pvtmem_per_sp >> 11
+      dev._ensure_stack_size(max(pvtmem_per_sp * dev.dev_info.num_sp_cores, 0x1000))
 
     kernargs_alloc_size = round_up(2048 + (self.tex_cnt + self.ibo_cnt) * 0x40 + len(self.samplers) * 4, 0x100)
     super().__init__(QCOMArgsState, self.dev, obj, kernargs_alloc_size=kernargs_alloc_size)
     weakref.finalize(self, self._fini, self.dev, self.lib_gpu, buf_spec)
 
   def __call__(self, *bufs, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1),
-               vals:tuple[int|None, ...]=(), wait=False, **kw):
-    if self.max_threads < prod(local_size): raise RuntimeError("Too many resources requested for launch")
-    if any(g*l>mx for g,l,mx in zip(global_size, local_size, [65536, 65536, 65536])) and any(l>mx for l,mx in zip(local_size, [1024, 1024, 1024])):
+               vals:tuple[int|None, ...]=(), wait=False, timeout:int|None=None):
+    threads = prod(local_size)
+    if (self.dev.gen == 6 and self.max_threads < threads) or (self.dev.gen == 8 and threads > 1024):
+      raise RuntimeError("Too many resources requested for launch")
+    if self.dev.gen == 6 and any(g*l>mx for g,l,mx in zip(global_size, local_size, [65536, 65536, 65536])) \
+      and any(l>mx for l,mx in zip(local_size, [1024, 1024, 1024])):
       raise RuntimeError(f"Invalid global/local dims {global_size=}, {local_size=}")
-    return super().__call__(*bufs, global_size=global_size, local_size=local_size, vals=vals, wait=wait)
+    if self.dev.gen == 8 and (any(not 0 < l <= 1024 for l in local_size) or
+                              any(not 0 < g or math.ceil(g) > 0xffffffff or g*l > 0xffffffff for g,l in zip(global_size, local_size))):
+      raise RuntimeError(f"Invalid global/local dims {global_size=}, {local_size=}")
+    return super().__call__(*bufs, global_size=global_size, local_size=local_size, vals=vals, wait=wait, timeout=timeout)
 
   def _parse_lib(self, lib):
     # Extract image binary
@@ -327,14 +423,16 @@ class QCOMProgram(HCQProgram['QCOMDevice']):
 
 class QCOMAllocator(HCQAllocatorBase):
   def _alloc(self, size:int, opts:BufferSpec) -> HCQBuffer:
-    return self.dev._gpu_map(opts.external_ptr, size) if opts.external_ptr else self.dev._gpu_alloc(size)
+    uncached = opts.uncached or (self.dev.gen == 8 and opts.cpu_access)
+    return self.dev._gpu_map(opts.external_ptr, size) if opts.external_ptr else self.dev._gpu_alloc(size, uncached=uncached)
 
-  def _do_copy(self, src_addr, dest_addr, size, prof_text):
+  def _copyin(self, dest:HCQBuffer, src:memoryview):
     self.dev.synchronize()
-    with cpu_profile(prof_text, f"{self.dev.device}:COPY"): ctypes.memmove(dest_addr, src_addr, size)
+    with cpu_profile(f"TINY -> {self.dev.device}", f"{self.dev.device}:COPY"): ctypes.memmove(dest.cpu_view().addr, mv_address(src), src.nbytes)
 
-  def _copyin(self, dest:HCQBuffer, src:memoryview): self._do_copy(mv_address(src), dest.cpu_view().addr, src.nbytes, f"TINY -> {self.dev.device}")
-  def _copyout(self, dest:memoryview, src:HCQBuffer): self._do_copy(src.cpu_view().addr, mv_address(dest), src.size, f"{self.dev.device} -> TINY")
+  def _copyout(self, dest:memoryview, src:HCQBuffer):
+    self.dev.synchronize()
+    with cpu_profile(f"{self.dev.device} -> TINY", f"{self.dev.device}:COPY"): ctypes.memmove(mv_address(dest), src.cpu_view().addr, src.size)
 
   def _as_buffer(self, src:HCQBuffer) -> memoryview: return to_mv(src.cpu_view().addr, src.size)
 
@@ -345,42 +443,60 @@ def flag(nm, val): return (val << getattr(kgsl, f"{nm}_SHIFT")) & getattr(kgsl, 
 class QCOMDevice(HCQCompiled):
   def __init__(self, device:str=""):
     self.fd = FileIOInterface('/dev/kgsl-3d0', os.O_RDWR)
-    self.dummy_addr = int(self._gpu_alloc(0x1000).va_addr)
+    info = kgsl.struct_kgsl_devinfo()
+    kgsl.IOCTL_KGSL_DEVICE_GETPROPERTY(self.fd, type=kgsl.KGSL_PROP_DEVICE_INFO, value=ctypes.addressof(info), sizebytes=ctypes.sizeof(info))
+    self.chip_id = info.chip_id
+    gpu_id = info.gpu_id
+    if not gpu_id:
+      if self.chip_id == 0x07002000: gpu_id = 702  # A702 has a 7xx marketing ID but uses A6xx.
+      elif (major:=(self.chip_id >> 24) & 0xff) < 0x10:
+        gpu_id = major * 100 + ((self.chip_id >> 16) & 0xff) * 10 + ((self.chip_id >> 8) & 0xff)
+    dev_id = mesa.struct_fd_dev_id(gpu_id, self.chip_id)
+    self.dev_info: Any
+    if gpu_id // 100 == 6 or gpu_id == 702: self.gen, self.dev_info = 6, None
+    else:
+      try: raw_dev_info = mesa.fd_dev_info_raw(dev_id)
+      except AttributeError as e:
+        raise RuntimeError(f"tinymesa required or device unsupported: chip_id={self.chip_id:#x} gpu_id={gpu_id}") from e
+      if not raw_dev_info or raw_dev_info.contents.chip == 0:
+        raise RuntimeError(f"tinymesa required or device unsupported: chip_id={self.chip_id:#x} gpu_id={gpu_id}")
+      self.gen, self.dev_info = raw_dev_info.contents.chip, mesa.fd_dev_info(dev_id)
+    gpu_id = dev_id.gpu_id or self.gen * 100
+    if self.gen not in (6, 8): raise RuntimeError(f"Unsupported GPU: chip_id={self.chip_id:#x}")
+    if self.gen == 6: self.dummy_addr = int(self._gpu_alloc(0x1000).va_addr)
 
     flags = kgsl.KGSL_CONTEXT_PREAMBLE | kgsl.KGSL_CONTEXT_PWR_CONSTRAINT | kgsl.KGSL_CONTEXT_NO_FAULT_TOLERANCE | kgsl.KGSL_CONTEXT_NO_GMEM_ALLOC \
       | flag("KGSL_CONTEXT_PRIORITY", getenv("QCOM_PRIORITY", 8)) | flag("KGSL_CONTEXT_PREEMPT_STYLE", kgsl.KGSL_CONTEXT_PREEMPT_STYLE_FINEGRAIN)
     self.ctx = kgsl.IOCTL_KGSL_DRAWCTXT_CREATE(self.fd, flags=flags).drawctxt_id
 
-    self.cmd_buf = self._gpu_alloc(16 << 20)
+    self.cmd_buf = self._gpu_alloc(16 << 20, uncached=self.gen == 8)
     self.cmd_buf_allocator = BumpAllocator(size=self.cmd_buf.size, base=int(self.cmd_buf.va_addr), wrap=True)
 
-    self.border_color_buf = self._gpu_alloc(0x1000, fill_zeroes=True)
+    self.border_color_buf = self._gpu_alloc(0x1000, uncached=self.gen == 8, fill_zeroes=True)
 
-    self.last_cmd:int = 0
+    if self.gen == 6: self.last_cmd = 0
 
     # Set max power
     struct.pack_into('IIQQ', pwr:=memoryview(bytearray(0x18)), 0, 1, self.ctx, mv_address(_:=memoryview(array.array('I', [1]))), 4)
     kgsl.IOCTL_KGSL_SETPROPERTY(self.fd, type=kgsl.KGSL_PROP_PWR_CONSTRAINT, value=mv_address(pwr), sizebytes=pwr.nbytes)
 
-    # Load info about qcom device
-    info = kgsl.struct_kgsl_devinfo()
-    kgsl.IOCTL_KGSL_DEVICE_GETPROPERTY(self.fd, type=kgsl.KGSL_PROP_DEVICE_INFO, value=ctypes.addressof(info), sizebytes=ctypes.sizeof(info))
-    self.gpu_id = (info.chip_id >> 24, (info.chip_id >> 16) & 0xFF, (info.chip_id >> 8) & 0xFF)
-
-    # a7xx start with 730x or 'Cxxx', a8xx starts 'Exxx'
-    if self.gpu_id[:2] >= (7, 3): raise RuntimeError(f"Unsupported GPU: chip_id={info.chip_id:#x}")
-
-    if PROFILE and self.gpu_id[:2] < (7, 3):
+    if PROFILE and self.gen == 6:
       System.write_sysfs("/sys/class/kgsl/kgsl-3d0/idle_timer", value="4000000000", msg="Failed to disable suspend mode", expected="4294967276")
 
-    super().__init__(device, QCOMAllocator(self), [QCOMCLRenderer, IR3Renderer], QCOMProgram, QCOMSignal, functools.partial(QCOMComputeQueue, self),
-                     arch=("a%d%d%d" + (",IMAGE_PITCH_ALIGNMENT=64" if IMAGE else "")) % self.gpu_id)
+    arch = f"a{gpu_id}{',IMAGE_PITCH_ALIGNMENT=64' if self.gen == 6 and IMAGE else ''}"
+    if self.gen == 8: arch += f",chip_id={self.chip_id:#x}"
+    renderers = [QCOMCLRenderer, IR3Renderer] if self.gen == 6 else [IR3Renderer]
+    super().__init__(device, QCOMAllocator(self), renderers, QCOMProgram, QCOMSignal, functools.partial(QCOMComputeQueue, self), arch=arch)
 
   def _gpu_alloc(self, size:int, flags:int=0, uncached=False, fill_zeroes=False) -> HCQBuffer:
     flags |= flag("KGSL_MEMALIGN", alignment_hint:=12) | kgsl.KGSL_MEMFLAGS_USE_CPU_MAP
     if uncached: flags |= flag("KGSL_CACHEMODE", kgsl.KGSL_CACHEMODE_UNCACHED)
+    elif self.gen == 8: flags |= flag("KGSL_CACHEMODE", kgsl.KGSL_CACHEMODE_WRITEBACK) | kgsl.KGSL_MEMFLAGS_IOCOHERENT
 
     alloc = kgsl.IOCTL_KGSL_GPUOBJ_ALLOC(self.fd, size=(bosz:=round_up(size, 1<<alignment_hint)), flags=flags, mmapsize=bosz)
+    if flags & kgsl.KGSL_MEMFLAGS_IOCOHERENT and not alloc.flags & kgsl.KGSL_MEMFLAGS_IOCOHERENT:
+      kgsl.IOCTL_KGSL_GPUOBJ_FREE(self.fd, id=alloc.id)
+      return self._gpu_alloc(size, flags & ~(kgsl.KGSL_CACHEMODE_MASK | kgsl.KGSL_MEMFLAGS_IOCOHERENT), uncached=True, fill_zeroes=fill_zeroes)
     va_addr = self.fd.mmap(0, bosz, mmap.PROT_READ | mmap.PROT_WRITE, mmap.MAP_SHARED, alloc.id * 0x1000)
 
     if fill_zeroes: ctypes.memset(va_addr, 0, size)
@@ -412,4 +528,5 @@ class QCOMDevice(HCQCompiled):
 
   def _at_profile_finalize(self):
     super()._at_profile_finalize()
-    with contextlib.suppress(RuntimeError): System.write_sysfs("/sys/class/kgsl/kgsl-3d0/idle_timer", "10", "Failed to reenable suspend mode")
+    if self.gen == 6:
+      with contextlib.suppress(RuntimeError): System.write_sysfs("/sys/class/kgsl/kgsl-3d0/idle_timer", "10", "Failed to reenable suspend mode")
