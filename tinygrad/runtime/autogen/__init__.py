@@ -154,9 +154,11 @@ def __getattr__(nm):
           *["python3 src/freedreno/registers/gen_header.py --rnn src/freedreno/registers/ --xml " +
             f"src/freedreno/registers/adreno/{s}.xml c-defines > gen/{s}.xml.h" for s in ["a6xx", "adreno_pm4", "a6xx_enums", "a6xx_descriptors"]],
           *[f"python3 src/compiler/{s}_h.py > gen/{s.split('/')[-1]}.h" for s in ["nir/nir_opcodes", "nir/nir_builder_opcodes"]],
-          *[f"python3 src/compiler/nir/nir_{s}_h.py --outdir gen" for s in ["intrinsics", "intrinsics_indices"]]]), cwd=path, shell=True, check=True),
-  srcs="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-25.2.7/mesa-25.2.7.tar.gz",
-  dll=f"'tinymesa_cpu' if DEV.renderer == 'LVP' else 'tinymesa', {tinymesa_path}, emsg='pip install tinymesa==25.2.7.2'",
+          *[f"python3 src/compiler/nir/nir_{s}_h.py --out gen/nir_{s}.h" for s in ["intrinsics", "intrinsics_indices"]]]), cwd=path, shell=True, check=True),
+  srcs="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-26.1.4/mesa-26.1.4.tar.gz",
+  # Mesa 26.1.4 adds this C-only deprecation pragma to register macros.
+  rules=[(r'\b__FD_DEPRECATED\b', ''), (r'_Pragma\s*\("GCC warning \\"Deprecated reg builder\\""\)', '')],
+  dll=f"'tinymesa_cpu' if DEV.renderer == 'LVP' else 'tinymesa', {tinymesa_path}, emsg='pip install tinymesa==26.1.4'",
   prolog=["from tinygrad.helpers import DEV", "import gzip, base64, platform, sysconfig, os"],
   epilog=lambda path: [system(f"{root}/extra/mesa/lvp_nir_options.sh {path}")])
     case "libclang":

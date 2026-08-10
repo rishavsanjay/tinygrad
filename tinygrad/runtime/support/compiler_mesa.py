@@ -95,33 +95,45 @@ def disas_adreno(lib:bytes, gpu_id=630):
 
 class IR3Compiler(Compiler):
   def __init__(self, arch):
-    assert arch.split(',')[0] == "a630", "only a630 supported, for now"
-    self.arch, self.dev_id = arch, mesa.struct_fd_dev_id(630, 0x6030001)
-    self.cc = mesa.ir3_compiler_create(None, self.dev_id, mesa.fd_dev_info(self.dev_id),
-                                       mesa.struct_ir3_compiler_options(disable_cache=True)).contents
-    self.cc.has_preamble = False
+    self.arch = arch
+    arch_name, *opts = arch.split(',')
+    gpu_id = int(arch_name[1:])
+    chip_id = 0x06030001 if gpu_id == 630 else int(next(x.split('=', 1)[1] for x in opts if x.startswith('chip_id=')), 0)
+    self.dev_id = mesa.struct_fd_dev_id(gpu_id, chip_id)
+    dev_info = mesa.fd_dev_info_raw(self.dev_id)
+    if not dev_info or dev_info.contents.chip == 0:
+      raise RuntimeError(f"unsupported Adreno chip_id={chip_id:#x} for {arch_name!r}")
+    self.cc = mesa.ir3_compiler_create(None, self.dev_id, dev_info, mesa.struct_ir3_compiler_options(disable_cache=True))
+    self.cc.contents.has_preamble = False
     self.nir_options = bytes(mesa.ir3_get_compiler_options(self.cc).contents)
-    super().__init__(f"compile_ir3_{arch}")
+    super().__init__(f"compile_ir3_mesa_26_1_4_{arch}")
 
-  def __del__(self): mesa.ir3_compiler_destroy(self.cc)
+  def __del__(self):
+    if getattr(self, 'cc', None): mesa.ir3_compiler_destroy(self.cc)
 
   def __reduce__(self): return IR3Compiler, (self.arch,)
 
-  # ir3_shader_variant info: https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_shader.c#L1099
   def compile(self, src) -> bytes:
     nir_shader = deserialize(src, self.nir_options)
     mesa.ir3_nir_lower_io_vars_to_temporaries(nir_shader)
     mesa.ir3_finalize_nir(self.cc, mesa.struct_ir3_shader_nir_options(), nir_shader)
-    shader = rzalloc(mesa.struct_ir3_shader, compiler=ctypes.pointer(self.cc), type=mesa.MESA_SHADER_COMPUTE, nir=nir_shader).contents
-    mesa.ir3_nir_post_finalize(shader)
-    v = rzalloc(mesa.struct_ir3_shader_variant, type=shader.type, compiler=ctypes.pointer(self.cc), key=mesa.struct_ir3_shader_key()).contents
-    v.const_state, shader.variants, shader.variant_count = rzalloc(mesa.struct_ir3_const_state, ctypes.pointer(v)), ctypes.pointer(v), 1
+    # Variants own their constant state in Mesa's ralloc tree.
+    # https://gitlab.freedesktop.org/mesa/mesa/-/blob/6dfbc555b4128ee51139c5f78c5aba2594c9701b/src/freedreno/ir3/ir3_shader.c#L496-562
+    ir3_shader = rzalloc(mesa.struct_ir3_shader, compiler=self.cc, type=mesa.MESA_SHADER_COMPUTE, nir=nir_shader)
+    shader = ir3_shader.contents
+    mesa.ir3_nir_post_finalize(ir3_shader)
+    variant = rzalloc(mesa.struct_ir3_shader_variant, ir3_shader, shader=ir3_shader, type=shader.type,
+                      compiler=self.cc, key=mesa.struct_ir3_shader_key())
+    v = variant.contents
+    v.const_state = rzalloc(mesa.struct_ir3_const_state, variant)
+    shader.variants, shader.variant_count = variant, 1
     v.num_uavs = (info:=nir_shader.contents.info).num_ssbos + info.num_images
-    assert not mesa.ir3_compile_shader_nir(self.cc, shader, v), "compilation failed"
-    lib = ctypes.cast(mesa.ir3_shader_assemble(v), ctypes.POINTER(ctypes.c_uint32))
-    # NB: bytes(v) means the pointers in v are no longer safe! a custom __reduce__ that supports pointers for c.Struct would make this simpler
-    ret = bytes(v) + bytes(v.const_state.contents) + ctypes.string_at(v.imm_state.values, v.imm_state.count * 4) + ctypes.string_at(lib, v.info.size)
-    mesa.ralloc_free(ctypes.pointer(v))
+    if mesa.ir3_compile_shader_nir(self.cc, ir3_shader, variant): raise RuntimeError(f"IR3 compilation failed for {self.arch!r}")
+    binary = ctypes.cast(mesa.ir3_shader_assemble(variant), ctypes.POINTER(ctypes.c_uint32))
+    ret = bytes(v) + bytes(v.const_state.contents) + ctypes.string_at(v.imm_state.values, v.imm_state.count * 4) + \
+      ctypes.string_at(binary, v.info.size)
+    mesa.ralloc_free(ir3_shader)
+    mesa.ralloc_free(nir_shader)
     return ret
 
   @staticmethod
