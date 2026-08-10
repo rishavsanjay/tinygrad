@@ -58,7 +58,8 @@ def nir_instr(nc=1, bs=lambda: None, intrins=None, srcs=None, has_def=True, df=N
     return wrapper
   return dec
 
-@nir_instr(nc=1, bs=lambda src: src.bit_size, exact=lambda b:b.exact, fp_fast_math=lambda b:b.fp_fast_math)
+# Mesa 26.1.4 replaced exact/fp_fast_math with fp_math_ctrl
+@nir_instr(nc=1, bs=lambda src: src.bit_size, fp_math_ctrl=lambda b:b.fp_math_ctrl)
 def nchannel(b:mesa.nir_builder, src:mesa.nir_def, c:int):
   alu_src = mesa.nir_alu_src(src=nsrc(src))
   alu_src.swizzle[0] = c
@@ -66,14 +67,17 @@ def nchannel(b:mesa.nir_builder, src:mesa.nir_def, c:int):
   ctypes.cast(mov.contents.src, ctypes.POINTER(mesa.nir_alu_src))[0] = alu_src
   return mov
 
-def nimm_set(imm:mesa.nir_def, x, dtype:DType):
-  instr = ctypes.cast(imm.parent_instr, ctypes.POINTER(mesa.nir_load_const_instr))
-  struct.pack_into(unwrap(dtype.fmt), (ctypes.c_ubyte * dtype.itemsize).from_address(ctypes.addressof(instr.contents.value)), 0, truncate[dtype](x))
+# Mesa 26.1.4 removed nir_def.parent_instr
+def nimm_set(instr:POINTER[mesa.nir_load_const_instr], x, dtype:DType):
+  value = (ctypes.c_ubyte * dtype.itemsize).from_address(ctypes.addressof(instr.contents.value))
+  struct.pack_into(unwrap(dtype.fmt), value, 0, truncate[dtype](x))
 
-@nir_instr(nc=1, bs=lambda dtype: dtype.bitsize)
-def nimm(b:mesa.nir_builder, x, dtype:DType) -> mesa.nir_def:
-  nimm_set((instr:=mesa.nir_load_const_instr_create(b.shader, 1, dtype.bitsize)).contents._def, x, dtype)
+def nimm_instr(b:mesa.nir_builder, x, dtype:DType) -> POINTER[mesa.nir_load_const_instr]:
+  instr = mesa.nir_load_const_instr_create(b.shader, 1, dtype.bitsize)
+  nimm_set(instr, x, dtype)
+  mesa.nir_builder_instr_insert(b, instr.contents.instr)
   return instr
+def nimm(b:mesa.nir_builder, x, dtype:DType) -> mesa.nir_def: return nimm_instr(b, x, dtype).contents._def
 @nir_instr(nc=1, bs=lambda dtype: dtype.bitsize)
 def nundef(b, dtype): return mesa.nir_undef_instr_create(b.shader, 1, dtype.bitsize)
 
@@ -300,13 +304,15 @@ class IR3Renderer(NIRRenderer):
   _param = LVPRenderer.param
   def _param_img(self, x):
     self.img_idx += 1
-    return nimm(self.b, self.img_idx - 1, dtypes.int)
+    self.img_consts[x] = nimm_instr(self.b, self.img_idx - 1, dtypes.int)
+    return self.img_consts[x].contents._def
 
   def param(self, b, x, sz): return self._param_img(x) if is_image_shape(x._shape) else self._param(b, x, sz)
 
   def prerender(self, uops:list[UOp]):
     super().prerender(uops)
     self.texs:set[UOp] = set()
+    self.img_consts:dict[UOp, POINTER[mesa.nir_load_const_instr]] = {}
     self.img_idx = 0
     self.param_sz = functools.reduce(padded_idx, (u.element_size() if u.addrspace is AddrSpace.ALU else 8
                                                  for u in uops if u.op is Ops.PARAM and not is_image_shape(u._shape)), 0)
@@ -315,7 +321,7 @@ class IR3Renderer(NIRRenderer):
     bufs = [u for u in uops if u.op is Ops.PARAM and u.addrspace is not AddrSpace.ALU]
     texs, imgs = itertools.count().__next__, itertools.count().__next__
     for b in filter(lambda b: is_image_shape(b._shape), bufs):
-      nimm_set(self.r[b], texs() if b in self.texs else imgs(), dtypes.int)
+      nimm_set(self.img_consts[b], texs() if b in self.texs else imgs(), dtypes.int)
 
     self.b.shader.contents.info.num_ubos = len([u for u in bufs if not is_image_shape(u._shape)])
     self.b.shader.contents.info.num_images = texs() + imgs()
