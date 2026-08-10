@@ -184,9 +184,17 @@ class CPUDevice(HCQCompiled):
     # posix uses sem to put cpus into sleep
     self.sem_addr = 0
     if not WIN:
-      self.sem = libc.sem_open(sem_name:=f"/tinygrad-{os.getpid()}-{id(self):x}".encode(), os.O_CREAT|os.O_EXCL, 0o600, 0) # type: ignore[call-arg]
-      self.sem_addr = unwrap(ctypes.cast(self.sem, ctypes.c_void_p).value)
-      if self.sem_addr == ctypes.c_void_p(-1).value or libc.sem_unlink(sem_name): raise OSError(ctypes.get_errno(), "semaphore")
+      if hasattr(sys, "getandroidapilevel"):
+        # Android's bionic libc does not support named semaphores.
+        self._sem_storage = libc.sem_t()
+        self.sem = ctypes.pointer(self._sem_storage)
+        self.sem_addr, self.sem_close = ctypes.addressof(self._sem_storage), libc.dll.sem_destroy
+        if libc.sem_init(self.sem, 0, 0): raise OSError(ctypes.get_errno(), "semaphore")
+      else:
+        self.sem = libc.sem_open(sem_name:=f"/tinygrad-{os.getpid()}-{id(self):x}".encode(), os.O_CREAT|os.O_EXCL, 0o600, 0) # type: ignore[call-arg]
+        self.sem_addr = unwrap(ctypes.cast(self.sem, ctypes.c_void_p).value)
+        self.sem_close = libc.dll.sem_close
+        if self.sem_addr == ctypes.c_void_p(-1).value or libc.sem_unlink(sem_name): raise OSError(ctypes.get_errno(), "semaphore")
 
     # TODO: move to hcq2
     with Context(EMULATED_DTYPES="", TRACK_MATCH_STATS=0):
@@ -204,7 +212,7 @@ class CPUDevice(HCQCompiled):
   @functools.cached_property
   def func_table(self) -> Buffer:
     fns = ([0, ctypes.windll.kernel32.ExitThread, 0, 0] if WIN else  # type: ignore[attr-defined]
-           [libc.dll.clock_gettime, libc.dll.pthread_exit, libc.dll.sem_wait, libc.dll.sem_close])
+           [libc.dll.clock_gettime, libc.dll.pthread_exit, libc.dll.sem_wait, self.sem_close])
     addrs = array.array('Q', [unwrap(ctypes.cast(f, ctypes.c_void_p).value) if f else 0 for f in fns])
     (ft:=Buffer(self.device, len(fns), dtypes.uint64, preallocate=True)).as_memoryview(force_zero_copy=True, no_sync=True).cast('Q')[:] = addrs
     return ft
