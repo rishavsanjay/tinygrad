@@ -9,8 +9,10 @@ from tinygrad.codegen.opt.postrange import apply_opts, Scheduler
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import Context, Target, prod
 from tinygrad.renderer import Renderer
+from tinygrad.renderer.nir import _ir3_writable_images
 from tinygrad.runtime.autogen import mesa
 from tinygrad.runtime.ops_qcom import QCOMArgsState, QCOMComputeQueue, qcom_image_descriptor, qcom_image_layout, qcom_sampler_descriptor
+from tinygrad.runtime.ops_qcom import qcom_validate_image_counts
 from tinygrad.runtime.support.hcq import HCQBuffer, MMIOInterface
 from tinygrad.uop.ops import AxisType, Ops, UOp, sym_infer
 
@@ -68,15 +70,15 @@ class TestQCOMAutomaticImageLowering(unittest.TestCase):
     with Context(IMAGE=1): lowered = full_rewrite_to_sink(ast, ren)
     self.assertEqual(lowered.arg.image_slots, (1,))
     params = {u.arg.slot:u for u in lowered.backward_slice if u.op is Ops.PARAM}
-    self.assertEqual(params[1].max_shape[-1], 4)
-    self.assertTrue(all(len(params[slot].max_shape) == 1 for slot in (0, 2, 3)))
+    self.assertTrue(all(params[slot].max_shape[-1] == 4 for slot in (0, 1, 3)))
+    self.assertEqual(len(params[2].max_shape), 1)
 
-  def test_selected_slot_only_and_forced_mode(self):
+  def test_automatic_and_forced_modes_accept_every_eligible_slot(self):
     ren = self.renderer("a830,QCOM_IMAGE_PITCH_ALIGNMENT=16")
     selected, other, idx = UOp.param(1, dtypes.float, (1024,)), UOp.param(2, dtypes.float, (1024,)), UOp.const(0, dtypes.int)
     with Context(IMAGE=1):
       self.assertIsNotNone(transform_to_image(({}, ren, (1,)), selected, idx))
-      self.assertIsNone(transform_to_image(({}, ren, (1,)), other, idx))
+      self.assertIsNotNone(transform_to_image(({}, ren, (1,)), other, idx))
     with Context(IMAGE=2): self.assertIsNotNone(transform_to_image(({}, ren, (1,)), other, idx))
 
   def test_upcast_geometry(self):
@@ -129,14 +131,70 @@ class TestQCOMImageDescriptors(unittest.TestCase):
     kaddr = ctypes.addressof(raw)
     kbuf = HCQBuffer(kaddr, len(raw), view=MMIOInterface(kaddr, len(raw), fmt='B'))
     prg = SimpleNamespace(dev=SimpleNamespace(gen=8), signature=(("data0", 0, dtypes.float, (7, 16, 4)),), NIR=True,
-      ibo_cnt=0, tex_cnt=1, tex_to_image=[0], consts_info=[], samp_cnt=0, samplers=[], buf_off=0, buf_offs=[],
-      tex_off=0x800, ibo_off=0x800, samp_off=0x840, kernargs_alloc_size=len(raw))
-    state = QCOMArgsState(kbuf, prg, (HCQBuffer(addr, 7*16*16),))
+      ibo_cnt=1, tex_cnt=1, tex_to_image=[0], consts_info=[], samp_cnt=0, samplers=[], buf_off=0, buf_offs=[],
+      tex_off=0x800, ibo_off=0x840, samp_off=0x880, kernargs_alloc_size=len(raw))
+    state = QCOMArgsState(kbuf, prg, (HCQBuffer(addr, qcom_image_layout(dtypes.float, (7, 16, 4)).size),))
     queue = QCOMComputeQueue(SimpleNamespace(gen=8))
     queue.bind_args_state(state)
     queue._apply_var_vals({addr.expr:self.addr})
     got = list(kbuf.cpu_view().view(offset=0x800, size=0x40, fmt='I'))
     self.assertEqual(got, concrete)
+
+  def test_multiple_images_keep_signature_and_texture_mapping_order(self):
+    raw = (ctypes.c_ubyte * 0x1100)()
+    kaddr = ctypes.addressof(raw)
+    kbuf = HCQBuffer(kaddr, len(raw), view=MMIOInterface(kaddr, len(raw), fmt='B'))
+    shape, addrs = (5, 16, 4), (0x100000, 0x200000, 0x300000)
+    signature = (("scalar", 0, dtypes.float, (1,)), ("image_a", 1, dtypes.float, shape),
+                 ("buffer", 2, dtypes.float, (64,)), ("image_b", 3, dtypes.float, shape),
+                 ("image_c", 4, dtypes.float, shape))
+    prg = SimpleNamespace(dev=SimpleNamespace(gen=8), signature=signature, NIR=True, ibo_cnt=3, tex_cnt=2, tex_to_image=[2, 0],
+      consts_info=[], samp_cnt=0, samplers=[], buf_off=0, buf_offs=[], tex_off=0x800, ibo_off=0x880, samp_off=0x940,
+      kernargs_alloc_size=len(raw))
+    bufs = (HCQBuffer(0x400000, 64), HCQBuffer(addrs[0], 0x1000), HCQBuffer(0x500000, 256),
+            HCQBuffer(addrs[1], 0x1000), HCQBuffer(addrs[2], 0x1000))
+    state = QCOMArgsState(kbuf, prg, bufs)
+    QCOMComputeQueue(SimpleNamespace(gen=8)).bind_args_state(state)
+    def desc_addr(off): return int.from_bytes(raw[off:off+4], "little") | ((int.from_bytes(raw[off+4:off+8], "little") & 0x1ffff) << 32)
+    self.assertEqual([desc_addr(prg.ibo_off + i*0x40) for i in range(3)], list(addrs))
+    self.assertEqual([desc_addr(prg.tex_off + i*0x40) for i in range(2)], [addrs[2], addrs[0]])
+
+  def test_image_count_and_backing_range_validation(self):
+    for sampled,total in ((0, 0), (1, 1), (4, 7), (31, 32)): qcom_validate_image_counts(sampled, total)
+    for sampled,total in ((2, 1), (32, 32), (0, 33), (-1, 1)):
+      with self.assertRaises(RuntimeError): qcom_validate_image_counts(sampled, total)
+
+    raw = (ctypes.c_ubyte * 0x900)()
+    kaddr = ctypes.addressof(raw)
+    kbuf = HCQBuffer(kaddr, len(raw), view=MMIOInterface(kaddr, len(raw), fmt='B'))
+    shape = (7, 16, 4)
+    prg = SimpleNamespace(dev=SimpleNamespace(gen=8), signature=(("image", 0, dtypes.float, shape),), NIR=True,
+      ibo_cnt=1, tex_cnt=0, tex_to_image=[], consts_info=[], samp_cnt=0, samplers=[], buf_off=0, buf_offs=[],
+      tex_off=0x800, ibo_off=0x800, samp_off=0x840, kernargs_alloc_size=len(raw))
+    base = HCQBuffer(0x100000, 0x1000, meta=(None, True))
+    QCOMArgsState(kbuf, prg, (base.offset(0x400, 7*16*16),))
+    with self.assertRaisesRegex(ValueError, "only 1024 remain"):
+      QCOMArgsState(kbuf, prg, (base.offset(0xc00, 7*16*16),))
+
+class TestIR3ImageAccess(unittest.TestCase):
+  def test_same_image_load_store_is_classified_writable(self):
+    img = UOp.param(0, dtypes.float, (5, 16, 4))
+    idx = img.index(UOp.const(0, dtypes.int), UOp.const(0, dtypes.int), dtype=dtypes.float)
+    value = UOp.const(1.0, dtypes.float).stack(UOp.const(2.0, dtypes.float), UOp.const(3.0, dtypes.float), UOp.const(4.0, dtypes.float))
+    load, store = idx.load(), idx.store(value)
+    self.assertEqual(_ir3_writable_images([img, idx, load, store]), {img})
+    self.assertEqual(_ir3_writable_images([img, idx, load]), set())
+
+class TestImageDifferential(unittest.TestCase):
+  def test_randomized_buffer_image_equivalence(self):
+    rng = np.random.default_rng(830)
+    for dtype in (np.float16, np.float32):
+      for height,width in ((1, 16), (3, 17), (5, 31), (9, 16)):
+        a, b = (rng.standard_normal((height, width, 4)).astype(dtype) for _ in range(2))
+        ref = (a * dtype(1.25) + b).astype(dtype)
+        with Context(IMAGE=2): got = (Tensor(a, device="PYTHON") * 1.25 + Tensor(b, device="PYTHON")).contiguous().numpy()
+        np.testing.assert_allclose(got, ref, atol=2e-3 if dtype == np.float16 else 1e-6,
+                                   rtol=2e-3 if dtype == np.float16 else 1e-6)
 
 class TestQCOMSamplers(unittest.TestCase):
   def test_nearest_unnormalized_zero_border(self):
