@@ -387,14 +387,36 @@ class TinyELF:
   name: str
   target: Target
   # tuple of (name, slot, dtype, shape)
-  signature: tuple[tuple[str|None, int, DType, tuple], ...]
+  signature: tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...]
   profile_key: bytes|None = None
 
   @staticmethod
-  def iter_sig(signature:tuple[tuple[str|None, int, DType, tuple], ...], offset:int=0) -> Generator[tuple[int, DType], None, None]:
-    for _,_,dt,_ in signature:
-      yield (offset:=round_up(offset, dt.itemsize)), dt
+  def iter_sig(signature:tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...], offset:int=0) \
+    -> Generator[tuple[int, DType, AddrSpace], None, None]:
+    for _,_,dt,_,addrspace in signature:
+      # we need to handle buffers differently
+      if addrspace is not AddrSpace.ALU:
+        yield (offset:=round_up(offset, 8)), dt, addrspace
+        offset += 8
+        continue
+
+      yield (offset:=round_up(offset, dt.itemsize)), dt, addrspace
       offset += dt.itemsize
+
+  @staticmethod
+  def merge_args(signature:tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...],
+                 buffers:Sequence, values:Sequence) -> list:
+    buffer_iterator = iter(buffers)
+    value_iterator = iter(values)
+
+    def _next() -> Generator:
+      for _,_,_,_,addrspace in signature:
+        if addrspace is AddrSpace.ALU:
+          yield next(value_iterator)
+        else:
+          yield next(buffer_iterator)
+    return list(_next())
+
 
 class Program(Generic[DeviceType]):
   def __init__(self, dev:DeviceType, obj:TinyELF): pass
