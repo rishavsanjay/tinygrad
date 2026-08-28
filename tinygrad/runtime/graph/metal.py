@@ -3,6 +3,7 @@ import ctypes, decimal, struct
 from tinygrad.helpers import dedup, getenv, unwrap, PROFILE
 from tinygrad.device import Buffer, Device, ProfileGraphEntry, ProfileGraphEvent
 from tinygrad.uop.ops import UOp, Ops
+from tinygrad.dtype import AddrSpace
 from tinygrad.engine.jit import GraphRunner, GraphException
 from tinygrad.runtime.ops_metal import MetalDevice, wait_check, to_ns_str
 from tinygrad.runtime.autogen import metal
@@ -35,12 +36,15 @@ class MetalGraph(GraphRunner):
       icb_command = self.icb.indirectComputeCommandAtIndex(j).retained()
       icb_command.setComputePipelineState(runtime.pipeline_state)
       all_pipelines.append(runtime.pipeline_state)
-      for i, b in enumerate(bufs):
-        if not any(pos == i for pos, _ in replace):
-          icb_command.setKernelBuffer_offset_atIndex(b._buf.buf, b._buf.offset, i)
+      buf_slots = [slot for _,slot,_,_,addrspace in runtime.signature if addrspace is not AddrSpace.ALU]
+      for pos, (slot, b) in enumerate(zip(buf_slots, bufs)):
+        if not any(p == pos for p, _ in replace):
+          icb_command.setKernelBuffer_offset_atIndex(b._buf.buf, b._buf.offset, slot)
           all_resources.append(b._buf.buf)
-      for nm,i,dt,_ in runtime.signature[len(bufs):]:
-        icb_command.setKernelBuffer_offset_atIndex(self.var_buf.buf, var_buf_offset, i)
+      self.uop_replace[j] = [(buf_slots[pos], iidx) for pos, iidx in replace]
+      for nm,slot,dt,_,addrspace in runtime.signature:
+        if addrspace is not AddrSpace.ALU: continue
+        icb_command.setKernelBuffer_offset_atIndex(self.var_buf.buf, var_buf_offset, slot)
         self.var_bind_data.append((nm, var_buf_offset, dt.fmt))
         var_buf_offset += dt.itemsize
       global_size, local_size = ast.arg.launch_dims({v: 0 for v in self.vars})
@@ -61,9 +65,9 @@ class MetalGraph(GraphRunner):
     updated_bufs = []
     for j in self.updatable:
       computeCommand = self.icb.indirectComputeCommandAtIndex(j)
-      for pos, iidx in self.uop_replace[j]:
+      for slot, iidx in self.uop_replace[j]:
         buf = cast(Buffer, input_uops[iidx].buffer)
-        computeCommand.setKernelBuffer_offset_atIndex(buf._buf.buf, buf._buf.offset, pos)
+        computeCommand.setKernelBuffer_offset_atIndex(buf._buf.buf, buf._buf.offset, slot)
         updated_bufs.append(buf._buf.buf)
 
     all_resources = dedup(self.all_resources + updated_bufs)
