@@ -1,0 +1,66 @@
+format_version = 1
+name = "batch1-decode-rdna3"
+description = "Portable optimization contract for low-latency, batch-one transformer decode on gfx1100."
+operation = "Specialize one transformer decode block or high-impact decode subgraph for a fixed local private-agent workload."
+target = "gfx1100"
+objective = "Minimize P95 inter-token latency and launches per token without violating numerical, KV-cache, memory, or task-quality constraints."
+agent_brief = """
+Treat this file as intent and evidence, not as a kernel DSL. Inspect the local model, shapes, generated tinygrad schedule, ISA and profile before choosing an implementation. You may fuse, reorder, specialize, replace abstractions, or generate a direct persistent implementation. The optional implementation cache is only a starting point. Keep observations separate from inferences, predict measurable changes before each experiment, and let the independent oracles reject bad ideas.
+"""
+invariants = [
+  "Match the trusted tinygrad reference within the configured tolerance.",
+  "Preserve KV-cache indexing and visibility semantics across repeated decode steps.",
+  "Pass tinygrad DEV=MOCK+AMD before any real-hardware benchmark unless explicitly waived.",
+  "Never use MockGPU time as performance evidence.",
+  "Preserve the frozen agent workload task-success threshold.",
+  "Do not make outbound network calls during core inference, profiling, generation, or validation."
+]
+unknowns = [
+  "The best fusion boundary is workload- and model-specific.",
+  "The optimal register/LDS tradeoff must be measured on the recipient W7900.",
+  "A full megakernel may lose to a smaller fused subgraph; benchmark both."
+]
+language = "python"
+extension = ".py"
+entrypoint = "build_kernel"
+
+[shapes]
+batch = 1
+sequence = "single decode token"
+model = "bound by the recipient workload"
+
+[dtypes]
+activations = "bf16 or fp16"
+accumulation = "fp32 where the oracle requires it"
+kv_cache = "bound by the recipient model"
+
+[compatibility]
+arch = "gfx1100"
+device_class = "Radeon PRO W7900"
+same_hardware_recommended = true
+
+[acceptance]
+maximum_task_success_drop_percent = 1.0
+maximum_invalid_tool_calls = 0
+maximum_crashes = 0
+external_network_calls = 0
+primary_metric = "p95_inter_token_latency_ms"
+
+[oracle]
+mockgpu_command = ["python3", "{candidate}", "--forge-mode", "mockgpu"]
+hardware_command = ["python3", "{candidate}", "--forge-mode", "benchmark", "--json"]
+heldout_command = ["python3", "{candidate}", "--forge-mode", "heldout", "--json"]
+
+[[artifact]]
+path = "knowledge/optimization_notes.md"
+role = "knowledge"
+description = "Free-form domain knowledge for the intelligent executor; not executable code."
+content = """
+# Batch-one RDNA3 decode notes
+
+Prioritize end-to-end decode latency over isolated FLOP/s. Useful evidence includes launch count per token, per-layer and per-kernel time, VGPR/SGPR/LDS/scratch metadata, occupancy, memory traffic, wait/stall evidence, prefix/KV-cache behavior, and tool-resumption overhead.
+
+Candidate ideas are not requirements: direct model-shape specialization, residual plus RMSNorm fusion, dequantization plus GEMV, RoPE/layout fusion, attention-decode specialization, persistent transformer-block execution, and removal of small launch boundaries. An intelligent agent may discard all of these when the profile contradicts them.
+
+The implementation is disposable. Durable knowledge is the intent, invariants, reference behavior, numerical tolerance, frozen workload, hardware evidence, failed experiments, and acceptance criteria.
+"""

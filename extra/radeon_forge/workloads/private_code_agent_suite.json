@@ -1,0 +1,58 @@
+{
+  "format_version": 1,
+  "name": "private-code-agent-v1",
+  "description": "Deterministic local repository tasks covering inspection, retrieval, tool execution, and resumed generation.",
+  "metadata": {
+    "primary_metric": "p95_end_to_end_task_latency",
+    "constraints": {
+      "external_network_calls": 0,
+      "tool_call_validity": 1.0,
+      "task_success_drop_from_baseline": 0.0
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "read-project-identity",
+      "prompt": "Read the first 80 lines of README.md and tell me the project name. Use the local file tool before answering.",
+      "expected_tools": ["read_file"],
+      "allowed_tools": ["read_file"],
+      "required_output_regex": ["tinygrad"],
+      "forbidden_output_regex": ["https?://"],
+      "max_tokens": 192,
+      "timeout_seconds": 120
+    },
+    {
+      "task_id": "locate-global-counters",
+      "prompt": "Find where GlobalCounters is defined in this private repository, then answer with the file path. Use local text search.",
+      "expected_tools": ["search_text"],
+      "allowed_tools": ["search_text"],
+      "required_output_regex": ["tinygrad/helpers\\.py"],
+      "forbidden_output_regex": ["https?://"],
+      "max_tokens": 192,
+      "timeout_seconds": 120
+    },
+    {
+      "task_id": "run-forge-unit-test",
+      "prompt": "Run only the Radeon Forge KV ledger unit test and report whether it passed. Do not run the full suite.",
+      "expected_tools": ["run_command"],
+      "allowed_tools": ["run_command"],
+      "required_output_regex": ["pass|ok"],
+      "forbidden_output_regex": ["https?://"],
+      "max_tokens": 192,
+      "timeout_seconds": 180,
+      "metadata": {
+        "expected_command": "python -m unittest test.test_radeon_forge_kv"
+      }
+    },
+    {
+      "task_id": "explain-local-profile-boundary",
+      "prompt": "Without calling a tool, explain in one sentence why MockGPU timing cannot be used as Radeon performance evidence.",
+      "expected_tools": [],
+      "allowed_tools": [],
+      "required_output_regex": ["hardware|W7900|real GPU"],
+      "forbidden_output_regex": ["https?://"],
+      "max_tokens": 96,
+      "timeout_seconds": 90
+    }
+  ]
+}
