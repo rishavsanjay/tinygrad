@@ -3,14 +3,14 @@ import os, ctypes, functools, mmap, struct, array, math, sys, contextlib, errno,
 from dataclasses import dataclass
 assert sys.platform != 'win32'
 from typing import Any
-from tinygrad.device import Compiled, BufferStorage, BufferSpec, Buffer, Device, Allocator, TinyELF
+from tinygrad.device import Compiled, BufferStorage, BufferSpec, Buffer, Device, Allocator, TinyELF, ProfileProgramEvent
 from tinygrad.runtime.support.hcq2 import HWQueue, HCQ_RUNTIME_DEV, encode_submit, ccall, cfield, cstruct, patch, unwrap_view
 from tinygrad.runtime.support.hcq import FileIOInterface, MMIOInterface
 from tinygrad.runtime.autogen import kgsl, mesa, libc
 from tinygrad.renderer.cstyle import QCOMCLRenderer
 from tinygrad.renderer.nir import IR3Renderer
 from tinygrad.helpers import getenv, mv_address, round_up, ceildiv, prod, is_image_shape, data64_le
-from tinygrad.helpers import next_power2, flatten, PROFILE, IMAGE
+from tinygrad.helpers import next_power2, flatten, PROFILE, IMAGE, VIZ, ContextVar
 from tinygrad.dtype import dtypes, DType, AddrSpace
 from tinygrad.uop.ops import Ops, UOp, UPat, PatternMatcher
 from tinygrad.engine.realize import get_call_arg_uops, get_call_var_uops
@@ -18,6 +18,8 @@ from tinygrad.runtime.support.system import System
 if getenv("IOCTL"): import extra.qcom_gpu_driver.opencl_ioctl  # noqa: F401  # pylint: disable=unused-import
 
 BUFTYPE_BUF, BUFTYPE_TEX, BUFTYPE_IBO = 0, 1, 2
+QCOM_PMC = ContextVar("QCOM_PMC", int(abs(VIZ.value) >= 2))
+QCOM_PMC_RING = ContextVar("QCOM_PMC_RING", 1024)
 QCOM_RETIREMENT_RING = 4096
 
 def _qcom_identity(chip_id:int, gpu_id:int=0):
@@ -128,6 +130,28 @@ class QCOMComputeQueue(HWQueue):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self._timestamp_values:list[UOp] = []
+    self._profiled:list[UOp] = []
+
+  def _prof_buf(self, name:str) -> UOp:
+    buf = getattr(self.dev, name)
+    return UOp.placeholder((buf.size,), buf.dtype, 0, device=self.devs, volatile=True, tag=name)
+
+  def _pmc_begin(self, lib:UOp) -> UOp|None:
+    if not self.dev.pmc_enabled: return None
+    log = self._prof_buf("qcom_pmc_log")
+    slot = (log.index(0).load() + len(self._profiled)) % self.dev.pmc_slots
+    self._profiled.append(log.index(1 + slot.cast(dtypes.int)).store(UOp.const(unwrap_view(lib)[0].arg.slot, dtypes.uint64)))
+    base = self._prof_buf("qcom_pmc_buf").getaddr(self.devs) + slot * self.dev.pmc_record_size
+    self.dev.perf.emit_snapshot(self, base)
+    return base
+
+  def _pmc_end(self, base:UOp|None):
+    if base is not None: self.dev.perf.emit_snapshot(self, base + self.dev.perf.slot_vals * 64)
+
+  def _pmc_bump(self, submit:UOp) -> UOp:
+    if not self._profiled: return submit
+    log = self._prof_buf("qcom_pmc_log")
+    return submit.after(log.after(submit, *self._profiled).index(0).store(log.index(0).load() + len(self._profiled)))
 
   def cmd(self, opcode:int, *vals): self.q(pkt7_hdr(opcode, sum(x.dtype.itemsize // 4 if isinstance(x, UOp) else 1 for x in vals)), *vals)
 
@@ -204,6 +228,7 @@ class QCOMComputeQueue(HWQueue):
 
   def exec(self, call:UOp, prg:UOp):
     data, lib = qcom_build_program(self.dev, prg, self.devs)
+    pmc_base = self._pmc_begin(lib)
     global_size, local_size = prg.arg.global_size, prg.arg.local_size
     threads = prod(local_size)
     if (self.dev.gen == 6 and data.max_threads < threads) or (self.dev.gen == 8 and threads > 1024):
@@ -341,6 +366,7 @@ class QCOMComputeQueue(HWQueue):
     else: self.cmd(mesa.CP_RUN_OPENCL, 0)
 
     self._cache_flush(write_back=True, invalidate=False, sync=False, memsync=False)
+    self._pmc_end(pmc_base)
 
   def submit(self, cmdbuf:UOp) -> UOp:
     ib, ib_off = unwrap_view(cmdbuf)
@@ -362,7 +388,7 @@ class QCOMComputeQueue(HWQueue):
         slot = value.cast(dtypes.int) % QCOM_RETIREMENT_RING
         last = log.index(slot * 2 + 1).store(timestamp)
         last = log.index(slot * 2).store(value.cast(dtypes.uint64)).after(last)
-    return last
+    return self._pmc_bump(last)
 
 class QCOMProgramData:
   def __init__(self, dev:QCOMDevice, obj:TinyELF):
@@ -466,11 +492,13 @@ class QCOMProgramData:
     self.fregs, self.hregs = _read_lib(lib, reg_desc_off + 0x14), _read_lib(lib, reg_desc_off + 0x18)
 
 _qcom_program_cache:dict[tuple[bytes, tuple[str, ...]], tuple[QCOMProgramData, UOp]] = {}
+_qcom_program_prof:dict[UOp, tuple[str, bytes, bytes|None]] = {}
 def qcom_build_program(dev:QCOMDevice, prg:UOp, devs:tuple[str, ...]) -> tuple[QCOMProgramData, UOp]:
   if (cached:=_qcom_program_cache.get(key:=(prg.src[3].arg, devs))) is None:
-    data = QCOMProgramData(dev, prg.to_elf())
+    data = QCOMProgramData(dev, obj:=prg.to_elf())
     image = bytes(data.image).ljust(round_up(len(data.image), 4), b"\x00")
     buf = UOp.placeholder((len(image),), dtypes.uint8, next(UOp.unique_num), device=devs).rtag("program")
+    if PROFILE: _qcom_program_prof[buf] = (data.name, obj.lib, obj.profile_key)
     cached = _qcom_program_cache[key] = (data, patch(buf, [], image))
   return cached
 
@@ -525,6 +553,15 @@ class QCOMDevice(Compiled):
     renderers = [QCOMCLRenderer, IR3Renderer] if self.gen == 6 else [IR3Renderer]
     super().__init__(device, QCOMAllocator(self), renderers, None, arch=arch)
 
+    self.pmc_enabled = bool(PROFILE > 0 and self.gen == 8 and QCOM_PMC.value > 0)
+    if self.pmc_enabled:
+      self.pmc_slots, self.pmc_read, self._pmc_last_ao = QCOM_PMC_RING.value, 0, None
+      self.pm_bufferize = PatternMatcher([
+        (UPat(Ops.PARAM, tag="program", name="b"), lambda ctx, b: ctx.program_buffer(b)),
+        (UPat(Ops.PARAM, tag="qcom_pmc_log"), lambda ctx: ctx.qcom_pmc_log),
+        (UPat(Ops.PARAM, tag="qcom_pmc_buf"), lambda ctx: ctx.qcom_pmc_buf),
+      ]) + self.pm_bufferize
+
     self.var_vals = {"kgsl_fd": self.fd.fd, "kgsl_ctx": self.ctx}
     self.pm_bufferize = PatternMatcher([
       (UPat(Ops.PARAM, tag="stack", name="b"), lambda ctx, b: ctx._ensure_stack_size(b.max_numel())),
@@ -541,10 +578,39 @@ class QCOMDevice(Compiled):
     return Buffer(self.device, 0x1000, dtypes.uint8, options=BufferSpec(nolru=True), initial_value=bytes(0x1000))
 
   @functools.cached_property
+  def perf(self):
+    from tinygrad.runtime.support.qcom_profile import QCOMPerfCounters
+    return QCOMPerfCounters(self)
+
+  @property
+  def pmc_record_size(self) -> int: return self.perf.slot_vals * 64 * 2
+
+  @functools.cached_property
+  def qcom_pmc_log(self) -> Buffer:
+    return Buffer(self.device, 1 + self.pmc_slots, dtypes.uint64,
+                  options=BufferSpec(host=True, uncached=True, cpu_access=True, nolru=True),
+                  initial_value=bytes((1 + self.pmc_slots) * 8))
+
+  @functools.cached_property
+  def qcom_pmc_buf(self) -> Buffer:
+    return Buffer(self.device, self.pmc_record_size * self.pmc_slots, dtypes.uint8,
+                  options=BufferSpec(uncached=True, cpu_access=True, nolru=True),
+                  initial_value=bytes(self.pmc_record_size * self.pmc_slots))
+
+  @functools.cached_property
   def qcom_retirement_log(self) -> Buffer:
     return Buffer(self.device, QCOM_RETIREMENT_RING * 2, dtypes.uint64,
                   options=BufferSpec(host=True, uncached=True, cpu_access=True, nolru=True),
                   initial_value=bytes(QCOM_RETIREMENT_RING * 16))
+
+  def program_buffer(self, b:UOp) -> Buffer:
+    if b not in self.prog_bufs:
+      buf = self.prog_bufs[b] = Buffer(self.device, b.max_numel(), b.dtype,
+                                       options=BufferSpec(cpu_access=True, nolru=True), preallocate=True)
+      if PROFILE:
+        name, lib, key = _qcom_program_prof[b]
+        Compiled.profile_events.append(ProfileProgramEvent(self.device, name, lib, buf._buf, b.arg.slot, key))
+    return self.prog_bufs[b]
 
   def _gpu_alloc(self, size:int, flags:int=0, uncached=False, fill_zeroes=False) -> BufferStorage:
     flags |= flag("KGSL_MEMALIGN", alignment_hint:=12) | kgsl.KGSL_MEMFLAGS_USE_CPU_MAP
@@ -604,5 +670,26 @@ class QCOMDevice(Compiled):
     return self._stack
 
   def _at_profile_finalize(self):
-    super()._at_profile_finalize()
-    with contextlib.suppress(RuntimeError): System.write_sysfs("/sys/class/kgsl/kgsl-3d0/idle_timer", "10", "Failed to reenable suspend mode")
+    if self.pmc_enabled:
+      self.synchronize()
+      super()._at_profile_finalize()
+      self.pmc_read = self.qcom_pmc_log.host.view(fmt='Q')[0]
+    else: super()._at_profile_finalize()
+    if self.gen == 6:
+      with contextlib.suppress(RuntimeError): System.write_sysfs("/sys/class/kgsl/kgsl-3d0/idle_timer", "10", "Failed to reenable suspend mode")
+
+  def collect_prof(self):
+    if self.pmc_enabled:
+      from tinygrad.runtime.support.qcom_profile import QCOMPMCSample, QCOMProfilePMCEvent
+      log = self.qcom_pmc_log.host.view(fmt='Q')
+      if (lost:=log[0] - self.pmc_read - self.pmc_slots) > 0:
+        print(f"{self.device}: Warning: {lost} kernel profiles were overwritten; raise QCOM_PMC_RING")
+      cpu = self.qcom_pmc_buf.host
+      for k in range(max(self.pmc_read, log[0] - self.pmc_slots), log[0]):
+        slot, tag = k % self.pmc_slots, log[1 + k % self.pmc_slots]
+        deltas, self._pmc_last_ao = self.perf.fetch_record(cpu, slot * self.pmc_record_size, self._pmc_last_ao)
+        sched = [QCOMPMCSample(name, off=8*i) for i,name in enumerate(self.perf.names)]
+        blob = struct.pack(f"<{len(self.perf.names)}Q", *(deltas[n] for n in self.perf.names))
+        Compiled.profile_events.append(QCOMProfilePMCEvent(self.device, tag, sched, blob, k))
+      self.pmc_read = log[0]
+    super().collect_prof()

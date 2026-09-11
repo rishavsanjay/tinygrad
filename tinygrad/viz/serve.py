@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import multiprocessing, pickle, difflib, os, threading, json, time, sys, socket, argparse, codecs, io, struct, re, traceback, itertools, socketserver
+import functools
 from contextlib import redirect_stdout, redirect_stderr, contextmanager
 from decimal import Decimal
 from dataclasses import dataclass, field
@@ -301,9 +302,36 @@ def row_tuple(row:str) -> tuple[tuple[int, int], ...]:
 
 # *** Performance counters
 
+def _qcom_mad_total(s:dict[str, tuple[int, int, int]]) -> int:
+  return (s['SP_FULL_ALU_MAD_INSTRUCTIONS'][0] + s['SP_HALF_ALU_MAD_INSTRUCTIONS'][0] +
+          s['SP_FULL_ALU_MUL_INSTRUCTIONS'][0] + s['SP_FULL_ALU_ADD_INSTRUCTIONS'][0])
+
+def _qcom_vbif_beats(s:dict[str, tuple[int, int, int]]) -> int:
+  return sum(s[f'UCHE_VBIF_{rw}_BEATS_CH{i}'][0] for rw in ('READ', 'WRITE') for i in (0, 1))
+
 metrics:dict[str, Callable[[dict[str, tuple[int, int, int]]], str]] = {
   "VALU utilization": lambda s: f"{100 * (s['SQ_INSTS_VALU'][0] / s['SQ_INSTS_VALU'][2]) / (s['GRBM_GUI_ACTIVE'][1] * 4):.1f}%",
   "SALU utilization": lambda s: f"{100 * (s['SQ_INSTS_SALU'][0] / s['SQ_INSTS_SALU'][2]) / (s['GRBM_GUI_ACTIVE'][1] * 4):.1f}%",
+  "SP ALU utilization": lambda s: f"{100 * s['SP_ALU_WORKING_CYCLES'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP stall TP": lambda s: f"{100 * s['SP_STALL_CYCLES_TP'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP stall UCHE": lambda s: f"{100 * s['SP_STALL_CYCLES_UCHE'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP stall RB": lambda s: f"{100 * s['SP_STALL_CYCLES_RB'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP stall VPC": lambda s: f"{100 * s['SP_STALL_CYCLES_VPC_BE'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP starve HLSQ": lambda s: f"{100 * s['SP_STARVE_CYCLES_HLSQ'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP GPR conflicts": lambda s: f"{s['SP_GPR_READ_CONFLICT'][0] + s['SP_GPR_WRITE_CONFLICT'][0]:,}",
+  "GM latency/sample": lambda s: f"{s['SP_GM_LOAD_LATENCY_CYCLES'][0] / s['SP_GM_LOAD_LATENCY_SAMPLES'][0]:.1f}cyc",
+  "GPU clock": lambda s: f"{s['CP_ALWAYS_COUNT'][0] / s['ALWAYS_ON_CYCLES'][0] * 19.2:.0f}MHz",
+  "CP busy": lambda s: f"{100 * s['CP_BUSY_CYCLES'][0] / s['CP_ALWAYS_COUNT'][0]:.1f}%",
+  "RBBM busy": lambda s: f"{100 * s['RBBM_STATUS_MASKED'][0] / s['CP_ALWAYS_COUNT'][0]:.1f}%",
+  "UCHE arb stall": lambda s: f"{100 * s['UCHE_STALL_CYCLES_ARBITER'][0] / s['UCHE_BUSY_CYCLES'][0]:.1f}%",
+  "VBIF latency/sample": lambda s: f"{s['UCHE_VBIF_LATENCY_CYCLES'][0] / s['UCHE_VBIF_LATENCY_SAMPLES'][0]:.1f}cyc",
+  "TP stall UCHE": lambda s: f"{100 * s['TP_STALL_CYCLES_UCHE'][0] / s['TP_BUSY_CYCLES'][0]:.1f}%",
+  "TP L1 misses": lambda s: f"{s['TP_L1_CACHELINE_MISSES'][0]:,}",
+  "Preemptions": lambda s: f"{s['CP_NUM_PREEMPTIONS'][0]}",
+  "MAD full share": lambda s: f"{100 * s['SP_FULL_ALU_MAD_INSTRUCTIONS'][0] / _qcom_mad_total(s):.1f}%",
+  "MAD half share": lambda s: f"{100 * s['SP_HALF_ALU_MAD_INSTRUCTIONS'][0] / _qcom_mad_total(s):.1f}%",
+  "ICL1 miss rate": lambda s: f"{100 * s['SP_ICL1_MISSES'][0] / s['SP_ICL1_REQUESTS'][0]:.2f}%",
+  "VBIF bytes": lambda s: f"{32 * _qcom_vbif_beats(s):,}",
 }
 
 def unpack_pmc(e) -> dict:
@@ -328,39 +356,42 @@ def unpack_pmc(e) -> dict:
     rows.append(row)
   for name, fn in metrics.items():
     try: rows.append([name, fn(stats)])
-    except KeyError: pass
+    except (KeyError, ZeroDivisionError): pass
+  if isinstance(getattr(e, "info", None), dict): rows.extend([[f"info:{k}", str(v)] for k,v in e.info.items()])
   return {"rows":rows, "cols":agg_cols}
 
 # ** on startup, list all the performance counter traces
 
-def load_amd_counters(data:VizData, profile:list) -> None:
+def load_gpu_counters(data:VizData, profile:list, device:str="AMD") -> None:
   counter_events:dict[tuple[int, int], dict] = {}
   durations:dict[bytes|str, list[float]] = {}
   prg_events:dict[int, ProfileProgramEvent] = {}
   arch = ""
   for e in profile:
-    if type(e).__name__ in {"ProfilePMCEvent", "ProfileSQTTEvent"}:
+    if type(e).__name__ in {"ProfilePMCEvent", "QCOMProfilePMCEvent", "ProfileSQTTEvent"} and e.device.startswith(device):
       counter_events.setdefault((e.kern, e.exec_tag), {}).setdefault(type(e).__name__, []).append(e)
-    if isinstance(e, ProfileRangeEvent) and e.device.startswith("AMD") and e.en is not None and e.profile_key is not None:
+    if isinstance(e, ProfileRangeEvent) and e.device.startswith(device) and e.en is not None and e.profile_key is not None:
       durations.setdefault(e.profile_key, []).append(float(e.en-e.st))
-    if isinstance(e, ProfileProgramEvent) and e.device.startswith("AMD") and e.tag is not None: prg_events[e.tag] = e
+    if isinstance(e, ProfileProgramEvent) and e.device.startswith(device) and e.tag is not None: prg_events[e.tag] = e
     if isinstance(e, ProfileDeviceEvent) and e.device.startswith("AMD"): arch = f"gfx{unwrap(e.props)['gfx_target_version']//1000}"
   if len(counter_events) == 0: return None
   data.ctxs.append({"name":"All Counters", "steps":[create_step("PMC", ("/all-pmc", len(data.ctxs), 0), (durations, all_counters:={}))]})
   run_number = {n:0 for n,_ in counter_events}
   for (k, tag),v in counter_events.items():
     # use the colored name if it exists
-    name = data.ctxs[r]["ki"].name if (r:=data.ref_map.get(unwrap(prg_events[k].profile_key))) is not None else prg_events[k].name
+    pkey = prg_events[k].profile_key or prg_events[k].name
+    name = data.ctxs[r]["ki"].name if (r:=data.ref_map.get(pkey)) is not None else prg_events[k].name
     run_number[k] += 1
     steps:list[dict] = []
-    if (pmc:=v.get("ProfilePMCEvent")):
+    if (pmc:=v.get("ProfilePMCEvent") or v.get("QCOMProfilePMCEvent")):
       steps.append(create_step("PMC", ("/prg-pmc", len(data.ctxs), len(steps)), pmc[0]))
-      all_counters[(name, run_number[k], unwrap(prg_events[k].profile_key))] = pmc[0]
+      all_counters[(name, run_number[k], pkey)] = pmc[0]
     # to decode a SQTT trace, we need the raw stream, program binary and device properties
     if (sqtt:=v.get("ProfileSQTTEvent")):
       for e in sqtt:
         if e.itrace: steps.append(create_step(f"SE:{e.se} PKTS", (f"/sqtt-{e.se}",len(data.ctxs),len(steps)), data=(e.blob,prg_events[k].lib,arch)))
-    data.ctxs.append({"name":f"SQTT {name}"+(f" n{run_number[k]}" if run_number[k] > 1 else ""), "steps":steps})
+    prefix = "QCOM " if device == "QCOM" else "SQTT "
+    data.ctxs.append({"name":prefix+name+(f" n{run_number[k]}" if run_number[k] > 1 else ""), "steps":steps})
 
 wave_colors = {"WMMA": "#1F7857", **{x:"#ffffc0" for x in ["VALU", "VINTERP"]}, "SALU": "#cef263", "SMEM": "#ffc0c0", "STORE": "#4fa3cc",
                **{x:"#b2b7c9" for x in ["VMEM", "SGMEM"]}, "LDS": "#9fb4a6", "IMMEDIATE": "#f3b44a", "BARRIER": "#d00000",
@@ -456,7 +487,7 @@ def get_profile(data:VizData, profile:list[ProfileEvent], sort_fn:Callable[[str]
   for ev in profile:
     if isinstance(ev, ProfileDeviceEvent):
       device_ts_diffs[ev.device] = ev.tdiff
-      if (d:=ev.device.split(":")[0]) == "AMD": device_decoders[d] = load_amd_counters
+      if (d:=ev.device.split(":")[0]) in {"AMD", "QCOM"}: device_decoders[d] = functools.partial(load_gpu_counters, device=d)
       if d == "NV": device_decoders[d] = load_nv_counters
   # load device specific counters
   for fxn in device_decoders.values(): fxn(data, profile)
