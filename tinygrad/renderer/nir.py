@@ -278,20 +278,24 @@ class LVPRenderer(NIRRenderer):
 
 def tovec(b, idx_y, idx_x): return nalu(b, "vec4", idx_x, idx_y, nundef(b, dtypes.int), nundef(b, dtypes.int))
 def nfloat(dtype): return mesa.nir_type_float16 if dtype == dtypes.half else mesa.nir_type_float32
+def _ir3_writable_images(uops:list[UOp]) -> set[UOp]:
+  return {u.src[0].src[0] for u in uops if u.op is Ops.STORE and u.src[0].op is Ops.INDEX and is_image_shape(u.src[0].src[0]._shape)}
 nstore_img = nir_instr(has_def=False, df=lambda img:img, num_components=lambda val:val.num_components,
   intrins=lambda dtype:{'IMAGE_DIM':mesa.GLSL_SAMPLER_DIM_2D, 'ACCESS':mesa.ACCESS_CAN_REORDER, 'SRC_TYPE':nfloat(dtype)},
   srcs=lambda b,img,idx_y,idx_x,val:[nsrc(x) for x in [img, tovec(b, idx_y, idx_x), nundef(b, dtypes.int), val, nimm(b, 0, dtypes.int)]])(
     lambda b,img,idx_y,idx_x,val,dtype:mesa.nir_intrinsic_instr_create(b.shader,g("nir_intrinsic_image_store")))
 
-_nload_img = nir_instr(intrins=lambda dtype:{'IMAGE_DIM':mesa.GLSL_SAMPLER_DIM_2D, 'ACCESS':mesa.ACCESS_CAN_REORDER, 'DEST_TYPE':nfloat(dtype)},
+_nload_img = nir_instr(intrins=lambda dtype,access:{'IMAGE_DIM':mesa.GLSL_SAMPLER_DIM_2D, 'ACCESS':access, 'DEST_TYPE':nfloat(dtype)},
   nc=4, bs=32, num_components=4,
   srcs=lambda b,img,idx_y,idx_x:[nsrc(x) for x in [img, tovec(b, idx_y, idx_x), nundef(b, dtypes.int), nimm(b, 0, dtypes.int)]])(
-      lambda b,img,idx_y,idx_x,dtype: mesa.nir_intrinsic_instr_create(b.shader, g("nir_intrinsic_image_load")))
+      lambda b,img,idx_y,idx_x,dtype,access: mesa.nir_intrinsic_instr_create(b.shader, g("nir_intrinsic_image_load")))
 
 class IR3Renderer(NIRRenderer):
   def nload_img(ctx,img,idx_y,idx_x):
-    ctx.texs.add(img)
-    return _nload_img(ctx.b, ctx.r[img], ctx.r[idx_y], ctx.r[idx_x], img.dtype)
+    # IR3 may use the texture cache only for read-only images. An image that is also written must use the coherent UAV load path.
+    access = 0 if img in ctx.writable_images else mesa.ACCESS_CAN_REORDER
+    if access: ctx.texs.add(img)
+    return _nload_img(ctx.b, ctx.r[img], ctx.r[idx_y], ctx.r[idx_x], img.dtype, access)
 
   def_rewrite = PatternMatcher([
     (UPat(Ops.STORE, src=(UPat.var('img').index(UPat.var('idx_y'), UPat.var('idx_x')), UPat.var("val")), allow_any_len=True),
@@ -312,6 +316,7 @@ class IR3Renderer(NIRRenderer):
   def prerender(self, uops:list[UOp]):
     super().prerender(uops)
     self.texs:set[UOp] = set()
+    self.writable_images = _ir3_writable_images(uops)
     self.img_consts:dict[UOp, POINTER[mesa.nir_load_const_instr]] = {}
     self.img_idx = 0
     self.param_sz = functools.reduce(padded_idx, (u.element_size() if u.addrspace is AddrSpace.ALU else 8
@@ -319,11 +324,13 @@ class IR3Renderer(NIRRenderer):
 
   def postrender(self, uops:list[UOp]):
     bufs = [u for u in uops if u.op is Ops.PARAM and u.addrspace is not AddrSpace.ALU]
-    texs, imgs = itertools.count().__next__, itertools.count().__next__
+    # Keep NIR image indices identical to image-parameter order. The runtime binds a complete UAV table in this order and
+    # uses IR3's tex_to_image mapping to build the compact sampled table, so arbitrary buffer/image parameter interleaving is safe.
+    imgs = itertools.count().__next__
     for b in filter(lambda b: is_image_shape(b._shape), bufs):
-      nimm_set(self.img_consts[b], texs() if b in self.texs else imgs(), dtypes.int)
+      nimm_set(self.img_consts[b], imgs(), dtypes.int)
 
     self.b.shader.contents.info.num_ubos = len([u for u in bufs if not is_image_shape(u._shape)])
-    self.b.shader.contents.info.num_images = texs() + imgs()
+    self.b.shader.contents.info.num_images = imgs()
 
   def supported_dtypes(self): return {d for d in NIRRenderer.supported_dtypes(self) if d != dtypes.double}
