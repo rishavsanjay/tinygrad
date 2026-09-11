@@ -1,10 +1,10 @@
 from __future__ import annotations
-import os, ctypes, functools, mmap, struct, array, math, sys, contextlib
+import os, ctypes, functools, mmap, struct, array, math, sys, contextlib, errno, time
 from dataclasses import dataclass
 assert sys.platform != 'win32'
 from typing import Any
 from tinygrad.device import Compiled, BufferStorage, BufferSpec, Buffer, Device, Allocator, TinyELF
-from tinygrad.runtime.support.hcq2 import HWQueue, HCQ_RUNTIME_DEV, encode_submit, ccall, cstruct, patch, unwrap_view
+from tinygrad.runtime.support.hcq2 import HWQueue, HCQ_RUNTIME_DEV, encode_submit, ccall, cfield, cstruct, patch, unwrap_view
 from tinygrad.runtime.support.hcq import FileIOInterface, MMIOInterface
 from tinygrad.runtime.autogen import kgsl, mesa, libc
 from tinygrad.renderer.cstyle import QCOMCLRenderer
@@ -120,6 +120,10 @@ def _read_lib(lib, off) -> int: return struct.unpack("I", lib[off:off+4])[0]
 
 class QCOMComputeQueue(HWQueue):
   dev:QCOMDevice
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._timestamp_signals:list[UOp] = []
+
   def cmd(self, opcode:int, *vals): self.q(pkt7_hdr(opcode, sum(x.dtype.itemsize // 4 if isinstance(x, UOp) else 1 for x in vals)), *vals)
 
   def reg(self, reg:int, *vals): self.q(pkt4_hdr(reg, sum(x.dtype.itemsize // 4 if isinstance(x, UOp) else 1 for x in vals)), *vals)
@@ -139,6 +143,7 @@ class QCOMComputeQueue(HWQueue):
   def memory_barrier(self): self._cache_flush(write_back=True, invalidate=True, sync=True, memsync=True)
 
   def signal(self, signal:UOp, value:UOp):
+    if self.dev.gen == 8: self._timestamp_signals.append(signal)
     self.cmd(mesa.CP_WAIT_FOR_IDLE)
     if self.dev.gen == 6:
       self.cmd(mesa.CP_EVENT_WRITE, qreg.cp_event_write_0(event=mesa.CACHE_FLUSH_TS), signal.getaddr(self.devs), value.cast(dtypes.uint32))
@@ -340,7 +345,12 @@ class QCOMComputeQueue(HWQueue):
 
     idir, base, nr, struct_t = kgsl.IOCTL_KGSL_GPU_COMMAND.args
     ioctl_cmd = (idir << 30) | (ctypes.sizeof(struct_t) << 16) | (base << 8) | nr
-    return ret.index(0).store(ccall(libc.dll.ioctl, fd, UOp.const(ioctl_cmd, dtypes.uint32), req.after(cmdbuf).index(0)))
+    last = ret.index(0).store(ccall(libc.dll.ioctl, fd, UOp.const(ioctl_cmd, dtypes.uint32), req.after(cmdbuf).index(0)))
+    if self.dev.gen == 8:
+      # HCQ slots reserve [value, timestamp]. Publish the exact KGSL submission timestamp beside every value written by this IB.
+      timestamp = cfield(req.after(last), kgsl.struct_kgsl_gpu_command, "timestamp").cast(dtypes.uint64)
+      for signal in dict.fromkeys(self._timestamp_signals): last = signal.after(last).index(1).store(timestamp)
+    return last
 
 class QCOMProgramData:
   def __init__(self, dev:QCOMDevice, obj:TinyELF):
@@ -495,7 +505,7 @@ class QCOMDevice(Compiled):
       System.write_sysfs("/sys/class/kgsl/kgsl-3d0/idle_timer", value="4000000000", msg="Failed to disable suspend mode", expected="4294967276")
 
     arch = f"a{gpu_id}{',IMAGE_PITCH_ALIGNMENT=64' if self.gen == 6 and IMAGE else ''}"
-    if self.gen == 8 and IMAGE: arch += ",QCOM_IMAGE_PITCH_ALIGNMENT=16"
+    if self.gen == 8 and IMAGE: arch += ",IMAGE_PITCH_ALIGNMENT=16"
     if self.gen == 8: arch += f",chip_id={self.chip_id:#x}"
     renderers = [QCOMCLRenderer, IR3Renderer] if self.gen == 6 else [IR3Renderer]
     super().__init__(device, QCOMAllocator(self), renderers, None, arch=arch)
@@ -542,7 +552,19 @@ class QCOMDevice(Compiled):
       FileIOInterface.munmap(storage.buf, storage.meta[0].mmapsize)
 
   def _wait_signal(self, sig:MMIOInterface|memoryview, value:int, timeout:int|None=None):
-    if sig[0] < value:
+    if self.gen == 8 and len(sig) > 1 and (ts:=sig[1]):
+      timeout_ms = self.wait_timeout_ms if timeout is None else timeout
+      deadline = time.monotonic() + timeout_ms / 1000
+      while True:
+        remaining_ms = max(0, math.ceil((deadline - time.monotonic()) * 1000))
+        try:
+          kgsl.IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID(self.fd, context_id=self.ctx, timestamp=ts, timeout=remaining_ms)
+          break
+        except OSError as e:
+          if e.errno in (errno.EINTR, errno.EAGAIN, errno.EDEADLK) and remaining_ms: continue
+          if e.errno not in (errno.ETIMEDOUT, errno.EDEADLK): raise
+          raise RuntimeError(f"Wait timeout: {timeout_ms} ms! KGSL submission {ts} did not retire") from e
+    elif sig[0] < value:
       ts = kgsl.IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID(self.fd, context_id=self.ctx, type=kgsl.KGSL_TIMESTAMP_QUEUED).timestamp
       with contextlib.suppress(OSError, RuntimeError):
         kgsl.IOCTL_KGSL_DEVICE_WAITTIMESTAMP_CTXTID(self.fd, context_id=self.ctx, timestamp=ts, timeout=int(timeout or self.wait_timeout_ms))

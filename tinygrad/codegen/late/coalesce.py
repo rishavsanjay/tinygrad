@@ -99,6 +99,12 @@ pm_simplify_add_image = PatternMatcher([
   # image load/store is always float
   (UPat(Ops.INDEX, dtype=dtypes.float, name="x").store(UPat(name="d", dtype=dtypes.half)), lambda x,d: x.store(d.cast(dtypes.float))),
   (UPat.var("x", dtype=dtypes.float).cast(dtypes.half).cast(dtypes.float), lambda x: x),
+  (UPat(Ops.WHERE, src=(UPat(name="c"), UPat(name="a", dtype=dtypes.float), UPat(name="b", dtype=dtypes.half))),
+   lambda c,a,b: c.where(a, b.cast(dtypes.float))),
+  (UPat(Ops.WHERE, src=(UPat(name="c"), UPat(name="a", dtype=dtypes.half), UPat(name="b", dtype=dtypes.float))),
+   lambda c,a,b: c.where(a.cast(dtypes.float), b)),
+  (UPat((Ops.INDEX, Ops.SHRINK), dtype=dtypes.half, name="x").store(UPat(name="d", dtype=dtypes.float)),
+   lambda x,d: x.store(d.cast(dtypes.half))),
 ])
 
 def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
