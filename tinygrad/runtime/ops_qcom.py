@@ -18,6 +18,7 @@ from tinygrad.runtime.support.system import System
 if getenv("IOCTL"): import extra.qcom_gpu_driver.opencl_ioctl  # noqa: F401  # pylint: disable=unused-import
 
 BUFTYPE_BUF, BUFTYPE_TEX, BUFTYPE_IBO = 0, 1, 2
+QCOM_RETIREMENT_RING = 4096
 
 def _qcom_identity(chip_id:int, gpu_id:int=0):
   if not gpu_id:
@@ -62,7 +63,7 @@ class QCOMImageLayout:
   array_pitch:int
   pitch_alignment:int
   @property
-  def pitchalign(self): return ctz(self.pitch_alignment) - 6
+  def pitchalign(self): return ctz(self.row_pitch) - 6
   @property
   def size(self): return self.array_pitch
 
@@ -73,7 +74,9 @@ def qcom_image_layout(dtype:DType, shape:tuple[int, ...], row_pitch:int|None=Non
   if not (0 < height <= 0x7fff and 0 < width <= 0x7fff): raise ValueError(f"QCOM image dimensions out of range: {shape}")
   pitch_alignment = 16 * 4 * dtype.itemsize
   if row_pitch is None: row_pitch = round_up(width * 4 * dtype.itemsize, pitch_alignment)
-  if row_pitch < width * 4 * dtype.itemsize or row_pitch % pitch_alignment:
+  # Height-one images may use any 64-byte-aligned row; there is no following row whose address needs the preferred pitch alignment.
+  row_alignment = 64 if height == 1 else pitch_alignment
+  if row_pitch < width * 4 * dtype.itemsize or row_pitch % row_alignment:
     raise ValueError(f"invalid QCOM image row pitch {row_pitch} for {shape} {dtype}; alignment is {pitch_alignment}")
   return QCOMImageLayout(height, width, row_pitch, round_up(row_pitch * round_up(height, 4), 0x1000), pitch_alignment)
 
@@ -88,7 +91,9 @@ def qcom_image_descriptor(gen:int, dtype:DType, shape:tuple[int, ...], addr, sto
     return desc + [0] * (16 - len(desc))
   if gen != 8: raise ValueError(f"unsupported QCOM image descriptor generation {gen}")
   if layout.row_pitch * 8 >= 1 << 24: raise ValueError(f"QCOM image row pitch is too large: {layout.row_pitch}")
-  desc = [addr & 0xffffffc0, ((addr >> 32) & 0x1ffff) | (mesa.A6XX_TEX_2D << 17) | (1 << 20),
+  addr_lo, addr_hi = addr & 0xffffffc0, ((addr >> 32) & 0x1ffff) | (mesa.A6XX_TEX_2D << 17) | (1 << 20)
+  if isinstance(addr, UOp): addr_lo, addr_hi = addr_lo.cast(dtypes.uint32), addr_hi.cast(dtypes.uint32)
+  desc = [addr_lo, addr_hi,
           layout.width | (layout.height << 15), fmt | (3 << 10) | (4 << 13) | (5 << 16) | (6 << 19), 0, 0,
           layout.row_pitch * 8 | (layout.pitchalign << 24), (layout.array_pitch >> 12) & 0x7fffff]
   return desc + [0] * (16 - len(desc))
@@ -122,7 +127,7 @@ class QCOMComputeQueue(HWQueue):
   dev:QCOMDevice
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    self._timestamp_signals:list[UOp] = []
+    self._timestamp_values:list[UOp] = []
 
   def cmd(self, opcode:int, *vals): self.q(pkt7_hdr(opcode, sum(x.dtype.itemsize // 4 if isinstance(x, UOp) else 1 for x in vals)), *vals)
 
@@ -143,13 +148,13 @@ class QCOMComputeQueue(HWQueue):
   def memory_barrier(self): self._cache_flush(write_back=True, invalidate=True, sync=True, memsync=True)
 
   def signal(self, signal:UOp, value:UOp):
-    if self.dev.gen == 8: self._timestamp_signals.append(signal)
+    if self.dev.gen == 8: self._timestamp_values.append(value)
     self.cmd(mesa.CP_WAIT_FOR_IDLE)
     if self.dev.gen == 6:
       self.cmd(mesa.CP_EVENT_WRITE, qreg.cp_event_write_0(event=mesa.CACHE_FLUSH_TS), signal.getaddr(self.devs), value.cast(dtypes.uint32))
       self._cache_flush(write_back=True, invalidate=False, sync=False, memsync=False)
     else:
-      self.cmd(mesa.CP_EVENT_WRITE7, qreg.cp_event_write7_0(event=mesa.CACHE_FLUSH7, write_src=mesa.EV_WRITE_USER_32B,
+      self.cmd(mesa.CP_EVENT_WRITE7, qreg.cp_event_write7_0(event=mesa.CACHE_FLUSH_TS, write_src=mesa.EV_WRITE_USER_32B,
                                                             write_dst=mesa.EV_DST_RAM, write_enabled=True),
                signal.getaddr(self.devs), value.cast(dtypes.uint32))
 
@@ -167,7 +172,8 @@ class QCOMComputeQueue(HWQueue):
     ubos = [bufs[slot] for _,slot,_,shape in data.signature if slot < len(bufs) and not is_image_shape(shape)]
     uavs = [(dt,shape,bufs[slot]) for _,slot,dt,shape in data.signature if slot < len(bufs) and is_image_shape(shape)]
     # NIR can reorder images to different texture slots
-    ibos, texs = uavs[:data.ibo_cnt], [uavs[data.ibo_cnt + (data.tex_to_image[i] if data.NIR else i)] for i in range(data.tex_cnt)]
+    ibos = uavs[:data.ibo_cnt]
+    texs = [uavs[data.tex_to_image[i] if data.NIR else data.ibo_cnt + i] for i in range(data.tex_cnt)]
 
     # the words of the kernargs, as runs at their byte offsets
     runs:list[tuple[int, list]] = [(off, [UOp.const(val, dtypes.uint32 if sz == 4 else dtypes.uint16)]) for val,off,sz in data.consts_info]
@@ -182,6 +188,7 @@ class QCOMComputeQueue(HWQueue):
 
     def _tex(b, ibo=False):
       imgdt, shape, buf = b
+      if self.dev.gen == 8: self.require_alignment(buf, 64, "QCOM image")
       pitch = shape[1] * 4 * imgdt.itemsize
       return qcom_image_descriptor(self.dev.gen, imgdt, shape, buf.getaddr(self.devs), storage=ibo, row_pitch=pitch)
     runs += [(data.tex_off, flatten(map(_tex, texs))), (data.ibo_off, flatten(map(functools.partial(_tex, ibo=True), ibos)))]
@@ -347,9 +354,14 @@ class QCOMComputeQueue(HWQueue):
     ioctl_cmd = (idir << 30) | (ctypes.sizeof(struct_t) << 16) | (base << 8) | nr
     last = ret.index(0).store(ccall(libc.dll.ioctl, fd, UOp.const(ioctl_cmd, dtypes.uint32), req.after(cmdbuf).index(0)))
     if self.dev.gen == 8:
-      # HCQ slots reserve [value, timestamp]. Publish the exact KGSL submission timestamp beside every value written by this IB.
+      # Keep retirement metadata separate from HCQ signals. Writing a signal's adjacent word makes HCQ alias ordering move an earlier GPU wait
+      # after the CPU timeline bump, which self-deadlocks the queue. Each record is [signal value, exact KGSL submission timestamp].
       timestamp = cfield(req.after(last), kgsl.struct_kgsl_gpu_command, "timestamp").cast(dtypes.uint64)
-      for signal in dict.fromkeys(self._timestamp_signals): last = signal.after(last).index(1).store(timestamp)
+      log = UOp.placeholder((QCOM_RETIREMENT_RING * 2,), dtypes.uint64, device=self.devs, volatile=True, tag="qcom_retirement_log")
+      for value in dict.fromkeys(self._timestamp_values):
+        slot = value.cast(dtypes.int) % QCOM_RETIREMENT_RING
+        last = log.index(slot * 2 + 1).store(timestamp)
+        last = log.index(slot * 2).store(value.cast(dtypes.uint64)).after(last)
     return last
 
 class QCOMProgramData:
@@ -376,9 +388,11 @@ class QCOMProgramData:
 
       # see https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_shader.h#L525
       # and https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_compiler_nir.c#L5389
-      self.samp_cnt, self.tex_cnt, self.ibo_cnt = (nt:=v.image_mapping.num_tex), nt, v.num_uavs - nt
-      self.tex_to_image = v.image_mapping.tex_to_image[:]
-      qcom_validate_image_counts(self.tex_cnt, self.tex_cnt + self.ibo_cnt)
+      self.samp_cnt, self.tex_cnt, self.ibo_cnt = (nt:=v.image_mapping.num_tex), nt, v.num_uavs
+      self.tex_to_image = v.image_mapping.tex_to_image[:self.tex_cnt]
+      qcom_validate_image_counts(self.tex_cnt, self.ibo_cnt)
+      if any(i >= self.ibo_cnt for i in self.tex_to_image):
+        raise RuntimeError(f"IR3 texture mapping outside image table: {self.tex_to_image} for {self.ibo_cnt} images")
       # IR3 outputs a sampler for every texture (https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_compiler_nir.c#L1714)
       self.samplers = qcom_sampler_descriptor(dev.gen) * self.samp_cnt
 
@@ -442,7 +456,8 @@ class QCOMProgramData:
     if _read_lib(lib, 0xb0) != 0: # check if we have constants.
       cdoff = _read_lib(lib, 0xac)
       while cdoff + 40 <= image_offset:
-        cnst, offset_words, _, is32 = struct.unpack("I", lib[cdoff:cdoff+4])[0], *struct.unpack("III", lib[cdoff+16:cdoff+28])
+        cnst = struct.unpack("I", lib[cdoff:cdoff+4])[0]
+        offset_words, _, is32 = struct.unpack("III", lib[cdoff+16:cdoff+28])
         self.consts_info.append((cnst, offset_words * (sz_bytes:=(2 << is32)), sz_bytes))
         cdoff += 40
 
@@ -515,6 +530,7 @@ class QCOMDevice(Compiled):
       (UPat(Ops.PARAM, tag="stack", name="b"), lambda ctx, b: ctx._ensure_stack_size(b.max_numel())),
       (UPat(Ops.PARAM, tag="dummy"), lambda ctx: ctx.dummy),
       (UPat(Ops.PARAM, tag="border_color"), lambda ctx: ctx.border_color),
+      (UPat(Ops.PARAM, tag="qcom_retirement_log"), lambda ctx: ctx.qcom_retirement_log),
     ]) + self.pm_bufferize
 
   @functools.cached_property
@@ -523,6 +539,12 @@ class QCOMDevice(Compiled):
   @functools.cached_property
   def border_color(self) -> Buffer: # zeros: the samplers clamp to a black border
     return Buffer(self.device, 0x1000, dtypes.uint8, options=BufferSpec(nolru=True), initial_value=bytes(0x1000))
+
+  @functools.cached_property
+  def qcom_retirement_log(self) -> Buffer:
+    return Buffer(self.device, QCOM_RETIREMENT_RING * 2, dtypes.uint64,
+                  options=BufferSpec(host=True, uncached=True, cpu_access=True, nolru=True),
+                  initial_value=bytes(QCOM_RETIREMENT_RING * 16))
 
   def _gpu_alloc(self, size:int, flags:int=0, uncached=False, fill_zeroes=False) -> BufferStorage:
     flags |= flag("KGSL_MEMALIGN", alignment_hint:=12) | kgsl.KGSL_MEMFLAGS_USE_CPU_MAP
@@ -552,7 +574,12 @@ class QCOMDevice(Compiled):
       FileIOInterface.munmap(storage.buf, storage.meta[0].mmapsize)
 
   def _wait_signal(self, sig:MMIOInterface|memoryview, value:int, timeout:int|None=None):
-    if self.gen == 8 and len(sig) > 1 and (ts:=sig[1]):
+    ts = 0
+    if self.gen == 8 and (log_buf:=self.__dict__.get("qcom_retirement_log")) is not None:
+      log, slot = log_buf.host.view(fmt='Q'), value % QCOM_RETIREMENT_RING
+      if log[slot * 2] != value: raise RuntimeError(f"Missing KGSL retirement timestamp for QCOM signal value {value}")
+      ts = log[slot * 2 + 1]
+    if self.gen == 8 and ts:
       timeout_ms = self.wait_timeout_ms if timeout is None else timeout
       deadline = time.monotonic() + timeout_ms / 1000
       while True:

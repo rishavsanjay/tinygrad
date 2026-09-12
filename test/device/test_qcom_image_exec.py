@@ -4,17 +4,17 @@ import numpy as np
 
 from tinygrad import Device, Tensor, TinyJit, dtypes
 from tinygrad.device import Buffer
-from tinygrad.engine.realize import compile_linear, get_runtime
+from tinygrad.engine.realize import lower_and_compile
 from tinygrad.helpers import Context, IMAGE
 from tinygrad.runtime.autogen import mesa
-from tinygrad.runtime.ops_qcom import QCOMComputeQueue
+from tinygrad.runtime.ops_qcom import QCOMComputeQueue, QCOMProgramData
 from tinygrad.uop.ops import AxisType, KernelInfo, Ops, UOp
 
 QCOM_IR3 = os.getenv("DEV", "").startswith("QCOM:IR3")
 
 def image_programs(t:Tensor):
-  linear = compile_linear(t.schedule_linear())
-  return [get_runtime("QCOM", call.src[0], cache=False) for call in linear.src if call.src and call.src[0].op is Ops.PROGRAM]
+  calls = [call.without_after for call in lower_and_compile(t.schedule_linear()).src]
+  return [QCOMProgramData(Device["QCOM"], call.src[0].to_elf()) for call in calls if call.src and call.src[0].op is Ops.PROGRAM]
 
 def multi_image_kernel(out_add:UOp, in_a:UOp, out_mul:UOp, in_b:UOp) -> UOp:
   y, x, c = UOp.range(out_add.shape[0], 0), UOp.range(out_add.shape[1], 1), UOp.range(4, 2, AxisType.UPCAST)
@@ -24,7 +24,8 @@ def multi_image_kernel(out_add:UOp, in_a:UOp, out_mul:UOp, in_b:UOp) -> UOp:
 
 def read_write_image_kernel(image:UOp) -> UOp:
   y, x, c = UOp.range(image.shape[0], 0), UOp.range(image.shape[1], 1), UOp.range(4, 2, AxisType.UPCAST)
-  return image[y, x, c].store(image[y, x, c] * 2 + 1).end(y, x, c).sink(arg=KernelInfo(name="qcom_read_write_image"))
+  at = image[y, x, c]
+  return at.store(at.load() * 2 + 1).end(y, x, c).sink(arg=KernelInfo(name="qcom_read_write_image"))
 
 @unittest.skipUnless(QCOM_IR3, "run with DEV=QCOM:IR3")
 class TestQCOMImageExecution(unittest.TestCase):
@@ -43,15 +44,15 @@ class TestQCOMImageExecution(unittest.TestCase):
     with mock.patch.object(QCOMComputeQueue, "reg", record_reg): probe.numpy()
     image_writes = [(reg, values[0]) for reg,values in register_writes]
     if IMAGE.value == 0:
-      self.assertNotIn("QCOM_IMAGE_PITCH_ALIGNMENT", Device["QCOM"].arch)
+      self.assertNotIn("IMAGE_PITCH_ALIGNMENT", Device["QCOM"].arch)
       self.assertTrue(all((p.tex_cnt, p.ibo_cnt) == (0, 0) for p in programs))
       self.assertEqual(image_writes, [])
     elif IMAGE.value == 1:
-      self.assertIn("QCOM_IMAGE_PITCH_ALIGNMENT=16", Device["QCOM"].arch)
+      self.assertIn("IMAGE_PITCH_ALIGNMENT=16", Device["QCOM"].arch)
       self.assertTrue(any(p.samp_cnt == p.tex_cnt > 0 for p in programs))
       self.assertTrue(any(reg == mesa.REG_A6XX_SP_CS_TSIZE and count > 0 for reg,count in image_writes))
     elif IMAGE.value == 2:
-      self.assertIn("QCOM_IMAGE_PITCH_ALIGNMENT=16", Device["QCOM"].arch)
+      self.assertIn("IMAGE_PITCH_ALIGNMENT=16", Device["QCOM"].arch)
       self.assertTrue(any(p.tex_cnt > 0 and p.ibo_cnt > 0 and p.samp_cnt == p.tex_cnt for p in programs))
       regs = {reg for reg,_ in image_writes}
       self.assertTrue({mesa.REG_A6XX_SP_CS_TSIZE, mesa.REG_A6XX_SP_CS_USIZE, mesa.REG_A6XX_SP_CS_SAMPLER_BASE,
@@ -136,7 +137,7 @@ class TestQCOMImageExecution(unittest.TestCase):
     addrs = []
     for value in range(1, 17, 2):
       inp = Tensor.full((7, 16, 4), value, device="QCOM", dtype=dtypes.float).contiguous().realize()
-      addrs.append(int(inp.uop.buffer._buf.va_addr))
+      addrs.append(int(inp.uop.buffer.get_buf("QCOM")))
       np.testing.assert_equal(transform(inp).numpy(), np.full((7, 16, 4), (value + 1) * 2, dtype=np.float32))
     self.assertGreater(len(set(addrs)), 1)
 
@@ -152,7 +153,7 @@ class TestQCOMImageExecution(unittest.TestCase):
       a = Tensor.full((5, 16, 4), value, device="QCOM").contiguous().realize()
       b = Tensor.full((5, 16, 4), value / 2, device="QCOM").contiguous().realize()
       out_add, out_mul = (Tensor.zeros(5, 16, 4, device="QCOM").contiguous().realize() for _ in range(2))
-      address_sets.append(tuple(int(t.uop.buffer._buf.va_addr) for t in (out_add, a, out_mul, b)))
+      address_sets.append(tuple(int(t.uop.buffer.get_buf("QCOM")) for t in (out_add, a, out_mul, b)))
       transform(out_add, a, out_mul, b)
       np.testing.assert_allclose(out_add.numpy(), np.full((5, 16, 4), value + value/2), atol=1e-6)
       np.testing.assert_allclose(out_mul.numpy(), np.full((5, 16, 4), value * value/2), atol=1e-6)

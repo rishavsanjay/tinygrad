@@ -27,6 +27,7 @@ class HCQInfo:
   nargs:int = 0
   table:int = -1
   inputs:tuple[tuple[UOp, str, int], ...] = ()
+  input_alignments:tuple[tuple[int, int, str], ...] = () # (inputs index, byte alignment, resource name)
   slots:tuple[tuple[str, int], ...] = () # per device, the position of its batch slots in the args
   host_deps:tuple[tuple[str, str], ...] = () # (memory owner, accessing device)
   written_bufs:tuple[UOp, ...] = () # write args
@@ -266,6 +267,7 @@ def sched_batches(l:UOp, profile:bool) -> UOp:
 class EncodeCtx:
   devs:tuple[str, ...]
   inputs:dict[tuple[UOp, str, int], int] = field(default_factory=dict)
+  input_alignments:dict[tuple[UOp, str, int], tuple[int, str]] = field(default_factory=dict)
   table:UOp = field(default_factory=lambda: UOp.placeholder((1,), dtypes.uint64, device="CPU", tag="inputs"))
   lt_patches:list[UOp] = field(default_factory=list)
 
@@ -300,6 +302,9 @@ class HWQueue:
     return len(self.blob)
 
   def memory_barrier(self): pass # a copy queue has nothing to flush
+  def require_alignment(self, buf:UOp, alignment:int, name:str):
+    base, off = unwrap_view(buf)
+    self.ctx.input_alignments[(base, self.devs[0], off)] = (alignment, name)
   def submit(self, cmdbuf:UOp) -> UOp: raise NotImplementedError("queues need a submit")
 
 # *****************
@@ -424,7 +429,10 @@ def lower_call(call:UOp) -> UOp|None:
   if VIZ: graph_rewrite(UOp.sink(*patches), PatternMatcher([]), name="View Link-Time Patches")
   if VIZ: graph_rewrite(sink, PatternMatcher([]), name="View Body")
 
-  info = replace(call.arg.aux, nargs=len(bufs), table=bufs.index(table) if table in bufs else -1, inputs=tuple(ctx.inputs),
+  input_keys = tuple(ctx.inputs)
+  input_alignments = tuple((ctx.inputs[k], alignment, name) for k,(alignment,name) in ctx.input_alignments.items() if k in ctx.inputs)
+  info = replace(call.arg.aux, nargs=len(bufs), table=bufs.index(table) if table in bufs else -1, inputs=input_keys,
+                 input_alignments=input_alignments,
                  slots=tuple((to_tuple(b.device)[0], i) for i, b in enumerate(bufs) if b.tag == "slots"))
   return call.replace(src=(sink, *bufs), arg=replace(call.arg, aux=info)).after(*patches)
 pm_encode = PatternMatcher([(UPat(Ops.CALL, src=(UPat(Ops.SINK),), name="call", allow_any_len=True), lower_call)])

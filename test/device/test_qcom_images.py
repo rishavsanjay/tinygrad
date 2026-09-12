@@ -20,6 +20,7 @@ class TestQCOMImageLayout(unittest.TestCase):
 
   def test_explicit_and_invalid_layouts(self):
     self.assertEqual(qcom_image_layout(dtypes.half, (5, 16, 4), 384).row_pitch, 384)
+    self.assertEqual(qcom_image_layout(dtypes.float, (1, 252, 4), 4032).pitchalign, 0)
     for dtype, shape, pitch in ((dtypes.half, (5, 17, 4), 136), (dtypes.float, (5, 17, 4), 256)):
       with self.assertRaises(ValueError): qcom_image_layout(dtype, shape, pitch)
     for dtype, shape in ((dtypes.int, (1, 16, 4)), (dtypes.float, (1, 16, 3)), (dtypes.float, (0, 16, 4))):
