@@ -1,5 +1,5 @@
 import unittest
-from tinygrad import Tensor, Device, TinyJit, dtypes, GlobalCounters
+from tinygrad import Tensor, Device, TinyJit, Variable, dtypes, GlobalCounters
 from tinygrad.engine.realize import run_linear
 from tinygrad.uop.ops import Ops
 from test.helpers import assert_kernel_count
@@ -245,7 +245,6 @@ class TestSetitemInto(unittest.TestCase):
     src[1:3].assign(new)
     out = dst[2:4].assign(snapshot)
     linear = out.schedule_linear(src)
-    self.assertEqual([call.src[0].op for call in linear.src], [Ops.COPY, Ops.SINK])
     run_linear(linear)
     self.assertListEqual(dst.tolist(), [0, 0, 11, 12, 0, 0])
     self.assertListEqual(src.tolist(), [10, 90, 91, 13])
@@ -259,7 +258,6 @@ class TestSetitemInto(unittest.TestCase):
     alias[0, 1:3].assign(new)
     out = dst[3:6].assign(snapshot)
     linear = out.schedule_linear(alias)
-    self.assertEqual([call.src[0].op for call in linear.src], [Ops.COPY, Ops.SINK])
     run_linear(linear)
     self.assertListEqual(dst.tolist(), [0, 0, 0, 12, 13, 14, 0])
     self.assertListEqual(src.tolist(), [10, 90, 91, 13, 14, 15])
@@ -271,6 +269,46 @@ class TestSetitemInto(unittest.TestCase):
     src[1:3].assign(Tensor([90, 91], device=src.device))
     self.assertListEqual(snapshot.tolist(), [11, 12])
     self.assertListEqual(mixed.tolist(), [101, 103])
+
+  def test_cross_device_indexed_destination_uses_single_copy(self):
+    dst = Tensor(list(range(8)), dtype=dtypes.int32, device="CPU:1").realize()
+    src = Tensor(list(range(10, 18)), dtype=dtypes.int32, device="CPU").realize()
+    out = dst[2:4].assign(src[5:7].to(dst.device))
+    linear = out.schedule_linear()
+    self.assertEqual([call.src[0].op for call in linear.src], [Ops.COPY])
+    run_linear(linear)
+    self.assertListEqual(dst.tolist(), [0, 1, 15, 16, 4, 5, 6, 7])
+
+  def test_symbolic_length_cross_device_slice_does_not_overcopy(self):
+    @TinyJit
+    def write(dst:Tensor, src:Tensor, v):
+      dst.shrink(((7, 7+v),)).assign(src.shrink(((9, 9+v),)).to(dst.device)).realize()
+    for i, value in enumerate((1, 4, 2, 3, 1)):
+      before = [-100-i]*20
+      values = list(range(100*i, 100*i+24))
+      dst = Tensor(before, dtype=dtypes.int32, device="CPU").realize()
+      src = Tensor(values, dtype=dtypes.int32, device="CPU:1").realize()
+      write(dst, src, Variable("slice_len", 1, 4).bind(value))
+      expected = before[:]
+      expected[7:7+value] = values[9:9+value]
+      self.assertListEqual(dst.tolist(), expected)
+
+  def test_optimized_copy_keeps_held_snapshot(self):
+    src = Tensor([10, 11, 12, 13], dtype=dtypes.int32, device="CPU:1").realize()
+    dst = Tensor.zeros(6, dtype=dtypes.int32, device="CPU").realize()
+    snapshot = src[1:3].to(dst.device)
+    dst[2:4].assign(snapshot).realize()
+    src[1:3].assign(Tensor([90, 91], dtype=dtypes.int32, device=src.device)).realize()
+    self.assertListEqual(snapshot.tolist(), [11, 12])
+    self.assertListEqual(dst.tolist(), [0, 0, 11, 12, 0, 0])
+
+  def test_cross_device_empty_and_buffer_end_slices(self):
+    dst = Tensor(list(range(8)), dtype=dtypes.int32, device="CPU").realize()
+    src = Tensor(list(range(10, 18)), dtype=dtypes.int32, device="CPU:1").realize()
+    dst[4:4].assign(src[2:2].to(dst.device)).realize()
+    self.assertListEqual(dst.tolist(), list(range(8)))
+    dst[6:8].assign(src[6:8].to(dst.device)).realize()
+    self.assertListEqual(dst.tolist(), [0, 1, 2, 3, 4, 5, 16, 17])
 
   def test_cross_device_slice_copy_jit_rebinds_destination_view(self):
     @TinyJit

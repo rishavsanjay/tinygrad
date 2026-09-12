@@ -151,11 +151,13 @@ def contiguous_buffer_view(x:UOp) -> tuple[UOp, int]|None:
   return view
 
 def supports_sliced_copy_destination(x:UOp) -> bool:
-  return (isinstance(x.device, str) and ":" not in x.device and
+  return (isinstance(x.device, str) and
           not x.device.startswith(("PYTHON", "NPY", "DISK", "CL", "WEBGPU", "NULL")))
 
 def store_cross_device_copy(ctx:dict[UOp, int], dst:UOp, x:UOp, cpy:UOp):
   if cpy.is_self_copy or dst.device != cpy.device or not supports_sliced_copy_destination(dst): return None
+  # COPY lowering encodes a concrete transfer length. Keep symbolic-sized stores on the ordinary COPY+STORE path.
+  if not all_int(dst.shape+x.shape): return None
   if ctx.get(cpy) != 1 or contiguous_buffer_view(dst) is None or contiguous_buffer_view(x) is None: return None
   return dst.store(x)
 

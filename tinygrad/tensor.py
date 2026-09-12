@@ -37,8 +37,9 @@ def on_disk(u:UOp): return isinstance(u.device, str) and u.device.startswith("DI
 def is_creation_device(u:UOp): return isinstance(u.device, str) and u.device.startswith(("DISK", "NPY", "PYTHON"))
 
 def creation_copy_is_realized(u:UOp):
-  # all copies from disk/numpy are realized into a real buffer
-  if is_creation_device(u.src[0]): return tag_uop(u)
+  # Creation-device copies and explicitly held cross-device snapshots need independent storage.
+  # Ephemeral copies may still be sunk directly into a destination slice by the scheduler.
+  if is_creation_device(u.src[0]) or (not u.is_self_copy and _tensor_holds(u)): return tag_uop(u)
 
 # CONTIGUOUS and AFTER + parents are the only nodes that get updated
 add_tags = PatternMatcher([

@@ -154,6 +154,8 @@ def assert_all_same_devices(ast:UOp):
 
 def copy_kernel_to_copy_uop(call:UOp, dst:UOp, src:UOp, r:UOp|None=None, offset:UOp|None=None):
   if dst.device == src.device and not (isinstance(dst.device, str) and dst.device.startswith("DISK")): return None
+  # A runtime COPY has a fixed byte count. The RANGE must therefore cover the exact concrete source PARAM.
+  if r is not None and (len(r.src) != 1 or r.src[0].op is not Ops.CONST or r.src[0].val != src.arg.size): return None
   copy = UOp(Ops.COPY, src=(src,), arg=dst.device)
   if offset is None and (dst.arg.size == src.arg.size or not supports_sliced_copy_destination(dst)):
     return call.replace(src=(copy,) + call.src[1:])

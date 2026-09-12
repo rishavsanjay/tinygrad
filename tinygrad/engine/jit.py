@@ -86,6 +86,13 @@ def _check_no_non_tensor_return(ret):
 
 def graph_class(dev): return dev.graph.func if isinstance(dev.graph, functools.partial) else dev.graph
 
+def _rebindable_buffer_expr(u:UOp) -> bool:
+  # This mirrors the PARAM-bearing forms engine.realize._resolve can rewrite.
+  if u.op is Ops.PARAM: return True
+  if u.op in (Ops.MSELECT, Ops.SHRINK, Ops.BITCAST): return _rebindable_buffer_expr(u.src[0])
+  if u.op is Ops.MSTACK: return any(_rebindable_buffer_expr(x) for x in u.src)
+  return False
+
 class GraphRunner:
   def __init__(self, linear:UOp, input_uops:tuple[UOp, ...]=()):
     self.linear = linear.src[0]
@@ -93,7 +100,7 @@ class GraphRunner:
     self.runtimes: list[Any|None] = []
     self.uop_replace: list[list[tuple[int, UOp]]] = []
     for call in self.linear.src:
-      buffer_replace = [(p, b) for p, b in enumerate(get_call_arg_uops(call)) if any(u.op is Ops.PARAM for u in b.toposort())]
+      buffer_replace = [(p, b) for p, b in enumerate(get_call_arg_uops(call)) if _rebindable_buffer_expr(b)]
       for dev_idx, (bufs, device_vars) in enumerate(unwrap_multi(call, resolve_params(call, input_uops))):
         self.calls.append((dev_idx, call.src[0], [b.ensure_allocated() for b in bufs], device_vars))
         self.runtimes.append(get_runtime(bufs[0].device, call.src[0]) if call.src[0].op is Ops.PROGRAM else None)

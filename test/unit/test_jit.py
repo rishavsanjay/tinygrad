@@ -13,8 +13,10 @@ def _simple_test(add, extract=lambda x: x, N=10):
 
 class TestJit(unittest.TestCase):
   def test_graph_rebinds_copy_views(self):
-    from tinygrad.engine.jit import GraphRunner
+    from tinygrad.engine.jit import GraphRunner, _rebindable_buffer_expr
     from tinygrad.uop.ops import Ops
+    self.assertTrue(_rebindable_buffer_expr(UOp.param(0, dtypes.int32, 6, "CPU").shrink(((1, 3),))))
+    self.assertFalse(_rebindable_buffer_expr(UOp.param(0, dtypes.int32, 6, "CPU").reshape((2, 3))))
     dst = UOp.param(0, dtypes.int32, 6, "CPU")
     src = UOp.param(1, dtypes.int32, 5, "CPU:1")
     copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int32, 2, "CPU:1"),), arg="CPU")
