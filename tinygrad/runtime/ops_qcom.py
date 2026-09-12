@@ -141,7 +141,7 @@ class QCOMComputeQueue(HWQueue):
     log = self._prof_buf("qcom_pmc_log")
     slot = (log.index(0).load() + len(self._profiled)) % self.dev.pmc_slots
     self._profiled.append(log.index(1 + slot.cast(dtypes.int)).store(UOp.const(unwrap_view(lib)[0].arg.slot, dtypes.uint64)))
-    base = self._prof_buf("qcom_pmc_buf").getaddr(self.devs) + slot * self.dev.pmc_record_size
+    base = self.dev.qcom_pmc_buf.get_buf(self.dev.device) + slot * self.dev.pmc_record_size
     self.dev.perf.emit_snapshot(self, base)
     return base
 
@@ -151,7 +151,7 @@ class QCOMComputeQueue(HWQueue):
   def _pmc_bump(self, submit:UOp) -> UOp:
     if not self._profiled: return submit
     log = self._prof_buf("qcom_pmc_log")
-    return submit.after(log.after(submit, *self._profiled).index(0).store(log.index(0).load() + len(self._profiled)))
+    return log.after(submit, *self._profiled).index(0).store(log.index(0).load() + len(self._profiled))
 
   def cmd(self, opcode:int, *vals): self.q(pkt7_hdr(opcode, sum(x.dtype.itemsize // 4 if isinstance(x, UOp) else 1 for x in vals)), *vals)
 
@@ -185,7 +185,10 @@ class QCOMComputeQueue(HWQueue):
   def timestamp(self, signal:UOp):
     self.cmd(mesa.CP_WAIT_FOR_IDLE)
     reg = mesa.REG_A8XX_CP_ALWAYS_ON_COUNTER if self.dev.gen == 8 else mesa.REG_A6XX_CP_ALWAYS_ON_COUNTER
-    self.cmd(mesa.CP_REG_TO_MEM, qreg.cp_reg_to_mem_0(reg=reg, cnt=2, _64b=True), signal.getaddr(self.devs))
+    self.reg_to_mem(reg, signal.getaddr(self.devs))
+
+  def reg_to_mem(self, reg:int, addr, count:int=2):
+    self.cmd(mesa.CP_REG_TO_MEM, qreg.cp_reg_to_mem_0(reg=reg, cnt=count, _64b=True), addr)
 
   def wait(self, signal:UOp, value:UOp):
     self.cmd(mesa.CP_WAIT_REG_MEM, qreg.cp_wait_reg_mem_0(function=mesa.WRITE_GE, poll=mesa.POLL_MEMORY), signal.getaddr(self.devs),
@@ -559,7 +562,6 @@ class QCOMDevice(Compiled):
       self.pm_bufferize = PatternMatcher([
         (UPat(Ops.PARAM, tag="program", name="b"), lambda ctx, b: ctx.program_buffer(b)),
         (UPat(Ops.PARAM, tag="qcom_pmc_log"), lambda ctx: ctx.qcom_pmc_log),
-        (UPat(Ops.PARAM, tag="qcom_pmc_buf"), lambda ctx: ctx.qcom_pmc_buf),
       ]) + self.pm_bufferize
 
     self.var_vals = {"kgsl_fd": self.fd.fd, "kgsl_ctx": self.ctx}
@@ -594,7 +596,7 @@ class QCOMDevice(Compiled):
   @functools.cached_property
   def qcom_pmc_buf(self) -> Buffer:
     return Buffer(self.device, self.pmc_record_size * self.pmc_slots, dtypes.uint8,
-                  options=BufferSpec(uncached=True, cpu_access=True, nolru=True),
+                  options=BufferSpec(host=True, uncached=True, cpu_access=True, nolru=True),
                   initial_value=bytes(self.pmc_record_size * self.pmc_slots))
 
   @functools.cached_property
@@ -672,7 +674,9 @@ class QCOMDevice(Compiled):
   def _at_profile_finalize(self):
     if self.pmc_enabled:
       self.synchronize()
-      super()._at_profile_finalize()
+      self.pmc_enabled = False
+      try: super()._at_profile_finalize()
+      finally: self.pmc_enabled = True
       self.pmc_read = self.qcom_pmc_log.host.view(fmt='Q')[0]
     else: super()._at_profile_finalize()
     if self.gen == 6:

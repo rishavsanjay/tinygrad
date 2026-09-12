@@ -6,16 +6,15 @@
 # LO/HI counter register offsets (verified against Mesa's A8xx RBBM_PERFCTR_* tables:
 # e.g. SP offset 0x292 == REG_A8XX_RBBM_PERFCTR_SP(18)). IOCTL_KGSL_PERFCOUNTER_READ is
 # EPERM for unprivileged contexts on stock kernels, so counters are read from command
-# streams with CP_REG_TO_MEM exactly like Turnip's query pools: WFI + CP_BARRIER on A8xx
-# for CP-side register visibility, CP_SCOPE_CNTL(DISABLE_PREEMPTION) so foreign-context
-# work cannot pollute the window, and free-running 64-bit values differenced host-side.
+# streams with CP_REG_TO_MEM exactly like freedreno's compute queries: WFI for register
+# visibility and free-running 64-bit values differenced host-side.
 from __future__ import annotations
 import weakref, contextlib, time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
   from tinygrad.runtime.ops_qcom import QCOMComputeQueue, QCOMDevice
-from tinygrad.helpers import data64_le, getenv, ProfileEvent
+from tinygrad.helpers import getenv, ProfileEvent
 from tinygrad.runtime.autogen import kgsl, mesa
 
 # Fixed rate of CP_ALWAYS_ON_COUNTER (measured 19.25-19.73 MHz on-device; nominal XO).
@@ -100,16 +99,15 @@ class QCOMPerfCounters:
     self.slot_vals = len(self.regs)
 
   def emit_snapshot(self, q:QCOMComputeQueue, base_addr:int):
-    # One counter window snapshot: WFI + BARRIER for CP-side register visibility, then a
+    # One counter window snapshot: WFI for register visibility, then a
     # CP_REG_TO_MEM per reserved counter into consecutive 64B slots at base_addr. The LO/HI
     # pair lands in the first two dwords of each slot (Turnip counter-pool layout).
     # NOTE: QCOM_PERF_SCOPE is deliberately not honored here. An armed preemption-disable
     # scope wedges the context if the host waits mid-window, and per-kernel profiling always
     # waits between kernels to copy records out.
     q.cmd(mesa.CP_WAIT_FOR_IDLE)
-    q.cmd(mesa.CP_BARRIER, 1)
     for i, reg in enumerate(self.regs):
-      q.cmd(mesa.CP_REG_TO_MEM, reg | (1 << 30), *data64_le(base_addr + i * 64))
+      q.reg_to_mem(reg, base_addr + i * 64, count=0)
 
   def fetch_record(self, cpu, base_off:int, last_ao:int|None) -> tuple[dict[str, int], int]:
     # Poll the end ALWAYS_ON slot until this record's end snapshot lands, then difference
