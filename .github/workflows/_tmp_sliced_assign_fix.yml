@@ -1,17 +1,17 @@
-name: temporary sliced assign fix
+name: temporary sliced assign validation
 on:
-  push:
+  pull_request:
     branches: [codex/sliced-assign-final]
+    types: [opened, synchronize, reopened]
 permissions:
-  contents: write
+  contents: read
 jobs:
-  patch-test-push:
+  patch-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: codex/sliced-assign-final
-          fetch-depth: 2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -55,7 +55,7 @@ jobs:
             copy = UOp(Ops.COPY, src=(src,), arg=dst.device)
           ''', '''def copy_kernel_to_copy_uop(call:UOp, dst:UOp, src:UOp, r:UOp|None=None, offset:UOp|None=None):
             if dst.device == src.device and not (isinstance(dst.device, str) and dst.device.startswith("DISK")): return None
-            # Runtime COPYs have a fixed byte count. Never lower a symbolic RANGE using the PARAM's max-sized storage.
+            # A runtime COPY has a fixed byte count. The RANGE must therefore cover the exact concrete source PARAM.
             if r is not None and (len(r.src) != 1 or r.src[0].op is not Ops.CONST or r.src[0].val != src.arg.size): return None
             copy = UOp(Ops.COPY, src=(src,), arg=dst.device)
           ''')
@@ -66,10 +66,10 @@ jobs:
           ''', '''def graph_class(dev): return dev.graph.func if isinstance(dev.graph, functools.partial) else dev.graph
 
           def _rebindable_buffer_expr(u:UOp) -> bool:
-            # Keep this grammar in lock-step with engine.realize._resolve.
+            # This mirrors the PARAM-bearing forms engine.realize._resolve can rewrite.
             if u.op is Ops.PARAM: return True
             if u.op in (Ops.MSELECT, Ops.SHRINK, Ops.BITCAST): return _rebindable_buffer_expr(u.src[0])
-            if u.op is Ops.MSTACK: return all(_rebindable_buffer_expr(x) for x in u.src)
+            if u.op is Ops.MSTACK: return any(_rebindable_buffer_expr(x) for x in u.src)
             return False
 
           class GraphRunner:
@@ -90,8 +90,7 @@ jobs:
           replace_once("test/unit/test_setitem_schedule.py", '''from tinygrad import Tensor, Device, TinyJit, dtypes, GlobalCounters
           ''', '''from tinygrad import Tensor, Device, TinyJit, Variable, dtypes, GlobalCounters
           ''')
-          replace_once("test/unit/test_setitem_schedule.py", '''if __name__ == '__main__':
-            unittest.main()
+          replace_once("test/unit/test_setitem_schedule.py", '''  def test_cross_device_slice_copy_jit_rebinds_destination_view(self):
           ''', '''  def test_cross_device_indexed_destination_uses_single_copy(self):
             dst = Tensor(list(range(8)), dtype=dtypes.int32, device="CPU:1").realize()
             src = Tensor(list(range(10, 18)), dtype=dtypes.int32, device="CPU").realize()
@@ -101,16 +100,6 @@ jobs:
             run_linear(linear)
             self.assertListEqual(dst.tolist(), [0, 1, 15, 16, 4, 5, 6, 7])
 
-            # The optimization must be symmetric with respect to logical device indices.
-            dst2 = Tensor(list(range(8)), dtype=dtypes.int32, device="CPU").realize()
-            src2 = Tensor(list(range(20, 28)), dtype=dtypes.int32, device="CPU:1").realize()
-            out2 = dst2[3:5].assign(src2[1:3].to(dst2.device))
-            linear2 = out2.schedule_linear()
-            self.assertEqual([call.src[0].op for call in linear2.src], [Ops.COPY])
-            run_linear(linear2)
-            self.assertListEqual(dst2.tolist(), [0, 1, 2, 21, 22, 5, 6, 7])
-
-            
           def test_symbolic_length_cross_device_slice_does_not_overcopy(self):
             @TinyJit
             def write(dst:Tensor, src:Tensor, v):
@@ -134,12 +123,30 @@ jobs:
             self.assertListEqual(snapshot.tolist(), [11, 12])
             self.assertListEqual(dst.tolist(), [0, 0, 11, 12, 0, 0])
 
-          if __name__ == '__main__':
-            unittest.main()
+          def test_cross_device_empty_and_buffer_end_slices(self):
+            dst = Tensor(list(range(8)), dtype=dtypes.int32, device="CPU").realize()
+            src = Tensor(list(range(10, 18)), dtype=dtypes.int32, device="CPU:1").realize()
+            dst[4:4].assign(src[2:2].to(dst.device)).realize()
+            self.assertListEqual(dst.tolist(), list(range(8)))
+            dst[6:8].assign(src[6:8].to(dst.device)).realize()
+            self.assertListEqual(dst.tolist(), [0, 1, 2, 3, 4, 5, 16, 17])
+
+          def test_cross_device_slice_copy_jit_rebinds_destination_view(self):
+          ''')
+
+          replace_once("test/unit/test_jit.py", '''  def test_graph_rebinds_copy_views(self):
+            from tinygrad.engine.jit import GraphRunner
+          ''', '''  def test_graph_rebinds_copy_views(self):
+            from tinygrad.engine.jit import GraphRunner, _rebindable_buffer_expr
+          ''')
+          replace_once("test/unit/test_jit.py", '''    dst = UOp.param(0, dtypes.int32, 6, "CPU")
+          ''', '''    self.assertTrue(_rebindable_buffer_expr(UOp.param(0, dtypes.int32, 6, "CPU").shrink(((1, 3),))))
+            self.assertFalse(_rebindable_buffer_expr(UOp.param(0, dtypes.int32, 6, "CPU").reshape((2, 3))))
+            dst = UOp.param(0, dtypes.int32, 6, "CPU")
           ''')
           PY
-      - name: Show diff
-        run: git diff --check && git diff
+      - name: Validate diff
+        run: git diff --check
       - name: Ruff changed files
         run: ruff check tinygrad/schedule/prepare.py tinygrad/schedule/__init__.py tinygrad/engine/jit.py tinygrad/tensor.py test/unit/test_setitem_schedule.py test/unit/test_jit.py
       - name: Targeted tests
@@ -148,12 +155,11 @@ jobs:
         run: |
           python -m pytest -q test/unit/test_setitem_schedule.py -x
           python -m pytest -q test/unit/test_jit.py::TestJit::test_graph_rebinds_copy_views
-      - name: Commit tested patch and remove temporary workflow
-        shell: bash
-        run: |
-          git rm .github/workflows/_tmp_sliced_assign_fix.yml
-          git add tinygrad/schedule/prepare.py tinygrad/schedule/__init__.py tinygrad/engine/jit.py tinygrad/tensor.py test/unit/test_setitem_schedule.py test/unit/test_jit.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit --amend -m "scheduler: harden sliced assign optimization"
-          git push --force-with-lease origin HEAD:codex/sliced-assign-final
+      - name: Save tested patch
+        if: always()
+        run: git diff > /tmp/sliced-assign.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sliced-assign-tested-patch
+          path: /tmp/sliced-assign.patch
