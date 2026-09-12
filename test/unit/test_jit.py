@@ -12,6 +12,30 @@ def _simple_test(add, extract=lambda x: x, N=10):
   assert_jit_cache_len(add, 1)
 
 class TestJit(unittest.TestCase):
+  def test_graph_rebinds_copy_views(self):
+    from tinygrad.engine.jit import GraphRunner
+    from tinygrad.uop.ops import Ops
+    dst = UOp.param(0, dtypes.int32, 6, "CPU")
+    src = UOp.param(1, dtypes.int32, 5, "CPU:1")
+    copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int32, 2, "CPU:1"),), arg="CPU")
+    call = copy.call(dst.shrink(((2, 4),)), src.shrink(((1, 3),)))
+    outputs = []
+    graph = None
+    for fill in range(3):
+      d = Tensor.full(6, fill, dtype=dtypes.int32, device="CPU").realize()
+      s = Tensor([10+fill, 20+fill, 30+fill, 40+fill, 50+fill], device="CPU:1").realize()
+      inputs = (d.uop, s.uop)
+      if graph is None: graph = GraphRunner(UOp(Ops.CALL, src=(UOp(Ops.LINEAR, src=(call,)),)), inputs)
+      replacements = dict(graph.updated_buffers(0, inputs))
+      self.assertEqual(set(replacements), {0, 1})
+      self.assertIs(replacements[0].base, d.uop.buffer.base)
+      self.assertIs(replacements[1].base, s.uop.buffer.base)
+      self.assertEqual((replacements[0].offset, replacements[1].offset), (8, 4))
+      # Execute using exactly the buffers supplied to graph backends for replay.
+      replacements[0].copy_from(replacements[1])
+      outputs.append((d, [fill, fill, 20+fill, 30+fill, fill, fill]))
+    for d, expected in outputs: self.assertListEqual(d.tolist(), expected)
+
   def test_jitbeam_triggers_beam(self):
     from unittest.mock import patch
     from tinygrad.helpers import getenv as _getenv

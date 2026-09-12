@@ -80,7 +80,7 @@ def create_schedule(sched_sink:UOp) -> UOp:
 
 from tinygrad.schedule.memory import memory_plan_rewrite
 from tinygrad.engine.realize import capturing, pm_flatten_linear
-from tinygrad.schedule.prepare import prepare_rangeify
+from tinygrad.schedule.prepare import prepare_rangeify, supports_sliced_copy_destination
 from tinygrad.schedule.rangeify import get_kernel_graph
 from tinygrad.helpers import CAPTURING
 from tinygrad.uop.ops import PatternMatcher, UPat, ParamArg
@@ -152,9 +152,23 @@ def assert_all_same_devices(ast:UOp):
   devices = dedup([x.device for x in ast.toposort() if x.op is Ops.PARAM and x.device is not None])
   if len(devices) >= 2: raise RuntimeError(f"all buffers must be on the same device: {devices}")
 
-def copy_kernel_to_copy_uop(call:UOp, dst:UOp, src:UOp, r:UOp|None=None):
+def copy_kernel_to_copy_uop(call:UOp, dst:UOp, src:UOp, r:UOp|None=None, offset:UOp|None=None):
   if dst.device == src.device and not (isinstance(dst.device, str) and dst.device.startswith("DISK")): return None
-  return call.replace(src=(UOp(Ops.COPY, src=(src,), arg=dst.device),) + call.src[1:])
+  copy = UOp(Ops.COPY, src=(src,), arg=dst.device)
+  if offset is None and (dst.arg.size == src.arg.size or not supports_sliced_copy_destination(dst)):
+    return call.replace(src=(copy,) + call.src[1:])
+  if offset is None: offset = UOp.const(0)
+  if (not supports_sliced_copy_destination(dst) or not isinstance(offset.val, int) or
+      dst.arg.slot != 0 or src.arg.slot != 1 or len(call.src) != 3 or
+      not isinstance(dst.device, str) or not isinstance(src.device, str) or
+      not isinstance(src.arg.size, int) or src.arg.size <= 0 or dst.dtype != src.dtype): return None
+  dest, source, size = call.src[1], call.src[2], src.arg.size
+  if (dest.dtype != dst.dtype or source.dtype != src.dtype or dest.max_numel() != dst.arg.size or source.max_numel() != size or
+      offset.val < 0 or offset.val + size > dest.max_numel()): return None
+  dest = dest.shrink(((offset.val, offset.val+size),))
+  if ((dview:=dest.contiguous_view()) is None or source.contiguous_view() is None or
+      dview[0].storage_base is not call.src[1].storage_base or dview[1] != offset.val): return None
+  return call.replace(src=(copy, dest, source))
 
 def simplify_copy_kernel(call:UOp, ast:UOp, dst:UOp, src:UOp):
   # NOTE: this is a codegen for SDMA devices
@@ -175,6 +189,12 @@ pm_copy_from_store = PatternMatcher([
                 name="call", allow_any_len=True), copy_kernel_to_copy_uop),
   (UPat(Ops.CALL, src=(UPat(Ops.PARAM, name="dst").index(UPat(Ops.RANGE, name="r"))
                 .store(UPat(Ops.PARAM, name="src").index(UPat(Ops.RANGE, name="r"))).end(UPat(Ops.RANGE, name="r")).sink(),),
+                name="call", allow_any_len=True), copy_kernel_to_copy_uop),
+  (UPat(Ops.CALL, src=(UPat(Ops.PARAM, name="dst").index(UPat(Ops.RANGE, name="r")+UPat.cvar("offset"))
+                .store(UPat(Ops.PARAM, name="src").index(UPat(Ops.RANGE, name="r"))).end(UPat(Ops.RANGE, name="r")).sink(),),
+                name="call", allow_any_len=True), copy_kernel_to_copy_uop),
+  (UPat(Ops.CALL, src=(UPat(Ops.PARAM, name="dst").index(UPat.cvar("offset"))
+                .store(UPat(Ops.PARAM, name="src").index(UPat(Ops.CONST, arg=0))).sink(),),
                 name="call", allow_any_len=True), copy_kernel_to_copy_uop),
 
   # if it wasn't copy, it currently can't be cross device

@@ -236,16 +236,25 @@ def transform_to_call(big_sink:UOp) -> tuple[UOp, dict[UOp, UOp]]:
 # *** all in scope Tensors are here. this gets relevant UOps ***
 
 all_tensors: dict[weakref.ref[Tensor], None] = {}
-def _apply_map_to_tensors(applied_map:dict[UOp, UOp], name:str) -> None:
+def _apply_map_to_tensors(applied_map:dict[UOp, UOp], name:str, preserve_copy_snapshots=False) -> None:
   with cpu_profile(TracingKey(name), "TINY"):
     # get tensors in scope
     in_scope: dict[UOp, bool] = {}
-    def visitor(node: UOp) -> bool: return True if node in applied_map else any(in_scope.get(s, False) for s in node.src)
+    def visitor(node: UOp) -> bool:
+      if preserve_copy_snapshots and node.op is Ops.COPY and not node.is_self_copy: return False
+      return True if node in applied_map else any(in_scope.get(s, False) for s in node.src)
     scope_tensors: list[Tensor] = [t for tref in list(all_tensors) if (t:=tref()) is not None and t.uop.topovisit(visitor, in_scope)]
 
     # get all Tensors and apply the map. always walk: replace exactly the nodes the map names, values are final
     sink = UOp.sink(*[t.uop for t in scope_tensors])
-    new_sink = sink.substitute(applied_map, name=f"substitute {name}", walk=True)
+    if preserve_copy_snapshots:
+      rewritten:dict[UOp, UOp] = {}
+      for u in sink.toposort(enter_calls=False):
+        if u.op is Ops.COPY and not u.is_self_copy: rewritten[u] = u
+        else: rewritten[u] = applied_map.get(u, u.replace(src=tuple(rewritten.get(s, s) for s in u.src)))
+      new_sink = rewritten[sink]
+    else:
+      new_sink = sink.substitute(applied_map, name=f"substitute {name}", walk=True)
 
     # set the relevant uop to the realized UOps
     for t,s,ns in zip(scope_tensors, sink.src, new_sink.src):
@@ -459,7 +468,7 @@ class Tensor(RandMixin):
         store = assign.src[1]
       # view assign: the base reads "after the store into the view" (one AFTER level). replace the node under the
       # views (e.g. RESHAPE(BUFFER)) so @function's substitution catches it
-      _apply_map_to_tensors({ib: target.after(store)}, name="Embed View Assign")
+      _apply_map_to_tensors({ib: target.after(store)}, name="Embed View Assign", preserve_copy_snapshots=True)
     else:
       # simple assign
       self.uop = assign

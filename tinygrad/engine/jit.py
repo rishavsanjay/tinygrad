@@ -7,7 +7,7 @@ from tinygrad.dtype import DType
 from tinygrad.uop.ops import UOp, PatternMatcher, Variable, sym_infer, Ops, rewrite_group, graph_rewrite
 from tinygrad.renderer import Estimates
 from tinygrad.engine.realize import capturing, compile_linear, link_linear, run_linear, graph_cache, estimate_uop, get_runtime
-from tinygrad.engine.realize import unwrap_multi, resolve_params, get_call_arg_uops, get_call_written_bufs
+from tinygrad.engine.realize import unwrap_multi, resolve_params, get_call_arg_uops, get_call_written_bufs, _resolve
 from tinygrad.schedule.memory import memory_plan_rewrite, _collect_bufs
 from tinygrad.nn.state import get_parameters
 from tinygrad.uop.movement import mop_cleanup
@@ -91,13 +91,13 @@ class GraphRunner:
     self.linear = linear.src[0]
     self.calls: list[tuple[int, UOp, list[Buffer], dict[str, int]]] = []
     self.runtimes: list[Any|None] = []
-    self.uop_replace: list[list[tuple[int, int]]] = []
+    self.uop_replace: list[list[tuple[int, UOp]]] = []
     for call in self.linear.src:
-      replace = [(p, b.arg.slot) for p, b in enumerate(get_call_arg_uops(call)) if b.op is Ops.PARAM]
+      buffer_replace = [(p, b) for p, b in enumerate(get_call_arg_uops(call)) if any(u.op is Ops.PARAM for u in b.toposort())]
       for dev_idx, (bufs, device_vars) in enumerate(unwrap_multi(call, resolve_params(call, input_uops))):
         self.calls.append((dev_idx, call.src[0], [b.ensure_allocated() for b in bufs], device_vars))
         self.runtimes.append(get_runtime(bufs[0].device, call.src[0]) if call.src[0].op is Ops.PROGRAM else None)
-        self.uop_replace.append(replace)
+        self.uop_replace.append(buffer_replace)
 
     self.var_vals_replace:dict[int, list[tuple[int, int]]] = {}
     self.launch_dims_replace:dict[int, tuple[int|None, int|None]] = {}
@@ -127,6 +127,11 @@ class GraphRunner:
     self.device, self.estimates = self.calls[0][2][0].device.split(":")[0], estimates.simplify()
 
   def __call__(self, input_uops:tuple[UOp, ...], var_vals:dict[str, int], wait=False) -> float|None: raise NotImplementedError("override this")
+
+  def updated_buffers(self, j:int, input_uops:tuple[UOp, ...]):
+    for pos, u in self.uop_replace[j]:
+      buf = _resolve(u, input_uops).buffer
+      yield pos, (buf.bufs[self.calls[j][0]] if isinstance(buf, MultiBuffer) else buf).ensure_allocated()
 
   def updated_vars(self, var_vals: dict[str, int]):
     vals = [var_vals[v] for v in self.vars]

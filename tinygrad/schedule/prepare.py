@@ -143,6 +143,26 @@ def copy_to_anon_store(x:UOp, copy:UOp):
   buf = UOp.new_buffer(copy.device, prod(x.max_shape), copy.dtype).reshape(x.max_shape)
   return buf.after(buf.store(x)).shrink_to(copy.shape)
 
+def contiguous_buffer_view(x:UOp) -> tuple[UOp, int]|None:
+  if not isinstance(x.device, str) or (view:=x.contiguous_view()) is None: return None
+  base, offset = view
+  if (not base.has_buffer_identity(after_ok=True) or x.dtype != base.dtype or offset < 0 or
+      offset + prod(x.max_shape) > base.max_numel()): return None
+  return view
+
+def supports_sliced_copy_destination(x:UOp) -> bool:
+  return (isinstance(x.device, str) and ":" not in x.device and
+          not x.device.startswith(("PYTHON", "NPY", "DISK", "CL", "WEBGPU", "NULL")))
+
+def store_cross_device_copy(ctx:dict[UOp, int], dst:UOp, x:UOp, cpy:UOp):
+  if cpy.is_self_copy or dst.device != cpy.device or not supports_sliced_copy_destination(dst): return None
+  if ctx.get(cpy) != 1 or contiguous_buffer_view(dst) is None or contiguous_buffer_view(x) is None: return None
+  return dst.store(x)
+
+pm_sliced_copy_store = PatternMatcher([
+  (UPat(Ops.STORE, src=(UPat.var("dst"), UPat(Ops.COPY, src=(UPat.var("x"),), name="cpy"))), store_cross_device_copy),
+])
+
 def materialize_cross_device_src(dest:UOp, src:UOp):
   # cross-device copies must read a whole buffer (SDMA can't do offset copies)
   if src.device is None or dest.device == src.device or src.has_buffer_identity(after_ok=True): return None
@@ -219,5 +239,10 @@ def prepare_rangeify(sink:UOp) -> UOp:
   # prepare for rangeify
   tsink = graph_rewrite(sink, multi_pm, name="multi_pm")
   if OPENPILOT_HACKS: tsink = graph_rewrite(tsink, pm_fold_moved_after, ctx={}, name="fold moved afters")
+  uses:dict[UOp, int] = {}
+  for u in tsink.toposort(enter_calls=False):
+    for s in u.src:
+      if s.op is Ops.COPY: uses[s] = uses.get(s, 0) + 1
+  tsink = graph_rewrite(tsink, pm_sliced_copy_store, ctx=uses, bottom_up=True, name="fold sliced copy store")
   tsink = graph_rewrite(tsink, pm_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
   return tsink
