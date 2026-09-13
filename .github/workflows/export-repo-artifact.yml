@@ -1,0 +1,17 @@
+name: Export Repo Artifact
+on:
+  push:
+    branches: [slice-artifact-export]
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tinygrad-slice-artifact
+          path: |
+            .
+            !.git
+          include-hidden-files: true
+          retention-days: 1
