@@ -1,0 +1,25 @@
+name: Build Minimal Slice Commit
+on:
+  push:
+    branches: [slice-min-builder]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: slice-min-builder
+          fetch-depth: 0
+      - name: Build clean commit
+        run: |
+          cp sliced_assign_minimal.patch /tmp/sliced_assign_minimal.patch
+          git checkout --detach 947882518442f7710d28bea5c3f4b1fe887fbb7a
+          git apply /tmp/sliced_assign_minimal.patch
+          git diff --check
+          git config user.name "Rishav Sanjay"
+          git config user.email "83537945+rishavsanjay@users.noreply.github.com"
+          git add -A
+          git commit -m "single kernel sliced assign from another device"
+          git push origin HEAD:refs/heads/slice-assign-minimal --force
