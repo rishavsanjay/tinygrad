@@ -56,6 +56,11 @@ def run_schedule(calls:list[UOp]):
 def zero_bufs(bufs):
   for b in bufs: b.copy_from(Buffer("PYTHON", b.size, b.dtype, opaque=memoryview(bytearray(b.nbytes))))
 
+def fill_int_buf(buf:Buffer, values:np.ndarray):
+  values = np.asarray(values, dtype=np.int32)
+  assert values.size == buf.size
+  buf.copy_from(Buffer("PYTHON", buf.size, buf.dtype, opaque=memoryview(bytearray(values.tobytes()))))
+
 @unittest.skipUnless(Device[Device.DEFAULT].graph is not None, "graph support required")
 class TestGraph(unittest.TestCase):
   def skip_if_no_offset(self):
@@ -65,6 +70,35 @@ class TestGraph(unittest.TestCase):
     graph = g.func if isinstance(g:=(d:=Device[Device.DEFAULT]).graph, functools.partial) else g
     if not issubclass(graph, MultiGraphRunner): self.skipTest("graph is not supported (not MultiGraphRunner)")
     if not hasattr(d.allocator, '_transfer') or not d.allocator.supports_transfer: self.skipTest("device is not supported (no transfers)")
+
+  @needs_second_gpu
+  def test_copy_graph_rebinds_nonzero_views(self):
+    self.skip_if_not_multigraph()
+    self.skip_if_no_offset()
+    d0, d1, base_size, copy_size = Device.DEFAULT, f"{Device.DEFAULT}:1", 16, 4
+    dstp, srcp = UOp.param(0, dtypes.int, base_size, d0), UOp.param(1, dtypes.int, base_size, d1)
+    copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int, copy_size, d1),), arg=d0)
+    call = copy.call(dstp.shrink(((3, 3+copy_size),)), srcp.shrink(((5, 5+copy_size),)))
+    graph_call = UOp(Ops.CUSTOM_FUNCTION, src=(UOp(Ops.LINEAR, src=(call,)),), arg="graph")
+
+    initial_dst, initial_src = make_buffer(d0, base_size), make_buffer(d1, base_size)
+    initial = np.full(base_size, -1, dtype=np.int32)
+    fill_int_buf(initial_dst, initial)
+    fill_int_buf(initial_src, np.arange(base_size, dtype=np.int32))
+    graph = Device[d0].graph(graph_call, (UOp.from_buffer(initial_dst), UOp.from_buffer(initial_src)))
+
+    dst, src = make_buffer(d0, base_size), make_buffer(d1, base_size)
+    dstv, srcv = np.full(base_size, -2, dtype=np.int32), np.arange(base_size, dtype=np.int32) + 100
+    fill_int_buf(dst, dstv)
+    fill_int_buf(src, srcv)
+    graph((UOp.from_buffer(dst), UOp.from_buffer(src)), {})
+    Device[d0].synchronize()
+    Device[d1].synchronize()
+
+    expected = dstv.copy()
+    expected[3:3+copy_size] = srcv[5:5+copy_size]
+    np.testing.assert_equal(expected, np.frombuffer(dst.as_memoryview(), np.int32))
+    np.testing.assert_equal(initial, np.frombuffer(initial_dst.as_memoryview(), np.int32))
 
   def test_order_2_writes_to_same_buf(self):
     d0 = Device.DEFAULT
