@@ -1,7 +1,7 @@
 from typing import Any, cast
 import ctypes, decimal, struct
 from tinygrad.helpers import dedup, getenv, unwrap, PROFILE
-from tinygrad.device import Buffer, Device, ProfileGraphEntry, ProfileGraphEvent
+from tinygrad.device import Device, ProfileGraphEntry, ProfileGraphEvent
 from tinygrad.uop.ops import UOp, Ops
 from tinygrad.engine.jit import GraphRunner, GraphException
 from tinygrad.runtime.ops_metal import MetalDevice, wait_check, to_ns_str
@@ -61,8 +61,7 @@ class MetalGraph(GraphRunner):
     updated_bufs = []
     for j in self.updatable:
       computeCommand = self.icb.indirectComputeCommandAtIndex(j)
-      for pos, iidx in self.uop_replace[j]:
-        buf = cast(Buffer, input_uops[iidx].buffer)
+      for pos, buf in self.updated_buffers(j, input_uops):
         computeCommand.setKernelBuffer_offset_atIndex(buf._buf.buf, buf._buf.offset, pos)
         updated_bufs.append(buf._buf.buf)
 

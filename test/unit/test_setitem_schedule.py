@@ -1,5 +1,5 @@
 import unittest
-from tinygrad import Tensor, Device, dtypes, GlobalCounters
+from tinygrad import Tensor, dtypes, GlobalCounters
 from test.helpers import assert_kernel_count
 
 class TestSetitemInto(unittest.TestCase):
@@ -139,16 +139,23 @@ class TestSetitemInto(unittest.TestCase):
     assert_kernel_count(1)
     self.assertEqual(GlobalCounters.global_mem, 100*4)  # full buffer written
 
-  @unittest.skipUnless(Device.DEFAULT != "CPU", "source must be on another device")
   def test_setitem_slice_assign_from_other_device(self):
-    # NOTE: this is 2 kernels, the cross-device copy should fuse with the assign into one
     a = Tensor.ones(20, device="CPU")
-    b = Tensor.arange(20).float().clone()
+    b = Tensor.arange(20).float().clone("CPU:1")
     Tensor.realize(a, b)
     GlobalCounters.reset()
     a[10:12].assign(b[13:15].to(a.device)).realize()
-    assert_kernel_count(2)
+    assert_kernel_count(1)
+    self.assertEqual(GlobalCounters.global_mem, 2*4)
     self.assertListEqual(a.tolist(), [1.0]*10 + [13.0, 14.0] + [1.0]*8)
+
+  def test_setitem_slice_assign_from_other_device_noncontiguous(self):
+    a = Tensor.zeros(4, 4, device="CPU").contiguous().realize()
+    b = Tensor.arange(4, dtype=dtypes.float32).reshape(2, 2).clone("CPU:1").realize()
+    GlobalCounters.reset()
+    a[1:3, 1:3].assign(b.to(a.device)).realize()
+    assert_kernel_count(2)
+    self.assertListEqual(a.tolist(), [[0.0]*4, [0.0, 0.0, 1.0, 0.0], [0.0, 2.0, 3.0, 0.0], [0.0]*4])
 
 if __name__ == '__main__':
   unittest.main()

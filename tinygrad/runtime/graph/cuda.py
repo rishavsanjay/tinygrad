@@ -2,7 +2,7 @@ import ctypes
 from typing import Any, cast
 import tinygrad.runtime.autogen.cuda as cuda
 from tinygrad.runtime.support.c import init_c_var
-from tinygrad.device import Device, MultiBuffer
+from tinygrad.device import Device
 from tinygrad.uop.ops import UOp, Ops
 from tinygrad.runtime.ops_cuda import CUDADevice, check, encode_args, cu_time_execution
 from tinygrad.engine.jit import MultiGraphRunner
@@ -47,9 +47,8 @@ class CUDAGraph(MultiGraphRunner):
   def __call__(self, input_uops:tuple[UOp, ...], var_vals:dict[str, int], wait=False):
     # Update buffers in the c_args struct.
     for j in self.updatable:
-      (_, params, c_args, is_copy), dev_idx = self.nodes[j], self.calls[j][0]
-      for pos, iidx in self.uop_replace[j]:
-        buf = b.bufs[dev_idx] if isinstance(b:=input_uops[iidx].buffer, MultiBuffer) else b
+      _, params, c_args, is_copy = self.nodes[j]
+      for pos, buf in self.updated_buffers(j, input_uops):
         if not is_copy: setattr(c_args, f'f{pos}', buf._buf)
         else: setattr(params, 'srcDevice' if pos == 1 else 'dstDevice', buf._buf)
 
