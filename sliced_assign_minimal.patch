@@ -1,0 +1,226 @@
+diff --git a/test/backend/test_graph.py b/test/backend/test_graph.py
+index 3d5ac85..0ebf73d 100644
+--- a/test/backend/test_graph.py
++++ b/test/backend/test_graph.py
+@@ -66,6 +66,29 @@ class TestGraph(unittest.TestCase):
+     if not issubclass(graph, MultiGraphRunner): self.skipTest("graph is not supported (not MultiGraphRunner)")
+     if not hasattr(d.allocator, '_transfer') or not d.allocator.supports_transfer: self.skipTest("device is not supported (no transfers)")
+ 
++  @needs_second_gpu
++  def test_copy_graph_rebinds_nonzero_views(self):
++    self.skip_if_not_multigraph()
++    self.skip_if_no_offset()
++    d0, d1, size, n = Device.DEFAULT, f"{Device.DEFAULT}:1", 16, 4
++    dst, src = UOp.param(0, dtypes.int, size, d0), UOp.param(1, dtypes.int, size, d1)
++    copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int, n, d1),), arg=d0)
++    call = copy.call(dst.shrink(((3, 3+n),)), src.shrink(((5, 5+n),)))
++    graph_ast = UOp(Ops.CUSTOM_FUNCTION, src=(UOp(Ops.LINEAR, src=(call,)),), arg="graph")
++
++    captured = (make_buffer(d0, size, fill=True), make_buffer(d1, size, fill=True))
++    captured_dst = np.frombuffer(captured[0].as_memoryview(), np.int32).copy()
++    graph = Device[d0].graph(graph_ast, tuple(UOp.from_buffer(x) for x in captured))
++
++    replay = (make_buffer(d0, size, fill=True), make_buffer(d1, size, fill=True))
++    expected = np.frombuffer(replay[0].as_memoryview(), np.int32).copy()
++    source = np.frombuffer(replay[1].as_memoryview(), np.int32).copy()
++    graph(tuple(UOp.from_buffer(x) for x in replay), {})
++    Device[d0].synchronize()
++    expected[3:3+n] = source[5:5+n]
++    np.testing.assert_equal(expected, np.frombuffer(replay[0].as_memoryview(), np.int32))
++    np.testing.assert_equal(captured_dst, np.frombuffer(captured[0].as_memoryview(), np.int32))
++
+   def test_order_2_writes_to_same_buf(self):
+     d0 = Device.DEFAULT
+     b = [make_buffer(d0, fill=True) for _ in range(5)]
+diff --git a/test/unit/test_jit.py b/test/unit/test_jit.py
+index 428bdb0..7c2d61e 100644
+--- a/test/unit/test_jit.py
++++ b/test/unit/test_jit.py
+@@ -12,6 +12,19 @@ def _simple_test(add, extract=lambda x: x, N=10):
+   assert_jit_cache_len(add, 1)
+ 
+ class TestJit(unittest.TestCase):
++  def test_graph_rebinds_copy_views(self):
++    from tinygrad.engine.jit import GraphRunner, create_graph_call
++    from tinygrad.uop.ops import Ops
++    dst, src = UOp.param(0, dtypes.int32, 6, "CPU"), UOp.param(1, dtypes.int32, 5, "CPU:1")
++    copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int32, 2, "CPU:1"),), arg="CPU")
++    call = copy.call(dst.shrink(((2, 4),)), src.shrink(((1, 3),)))
++    old = (Tensor.zeros(6, dtype=dtypes.int32, device="CPU").realize(), Tensor.zeros(5, dtype=dtypes.int32, device="CPU:1").realize())
++    graph = GraphRunner(create_graph_call([call]).src[0], tuple(x.uop for x in old))
++    new = (Tensor.zeros(6, dtype=dtypes.int32, device="CPU").realize(), Tensor.zeros(5, dtype=dtypes.int32, device="CPU:1").realize())
++    bufs = dict(graph.updated_buffers(0, tuple(x.uop for x in new)))
++    self.assertEqual((bufs[0].offset, bufs[1].offset), (8, 4))
++    self.assertEqual((bufs[0].base, bufs[1].base), (new[0].uop.buffer.base, new[1].uop.buffer.base))
++
+   def test_jitbeam_triggers_beam(self):
+     from unittest.mock import patch
+     from tinygrad.helpers import getenv as _getenv
+@@ -409,6 +422,15 @@ class TestJitPrune(unittest.TestCase):
+       np.testing.assert_allclose(out.tolist(), [x*2+y for x,y in zip(weights.tolist(), a.tolist())])
+     assert_jit_cache_len(w2_prune, 1)
+ 
++  def test_prune_slice_assign_from_fixed_source(self):
++    src = Tensor([7, 8], device="CPU:1").realize()
++    @TinyJit(prune=True)
++    def write(dst): dst[1:3].assign(src.to(dst.device)).realize()
++    for fill in range(4):
++      dst = Tensor.full(4, fill, dtype=dtypes.int32, device="CPU").realize()
++      write(dst)
++      self.assertListEqual(dst.tolist(), [fill, 7, 8, fill])
++
+ 
+ class TestJitInsideJit(unittest.TestCase):
+   def test_jit_jit_error(self):
+diff --git a/test/unit/test_setitem_schedule.py b/test/unit/test_setitem_schedule.py
+index 9088531..090d1c1 100644
+--- a/test/unit/test_setitem_schedule.py
++++ b/test/unit/test_setitem_schedule.py
+@@ -1,5 +1,5 @@
+ import unittest
+-from tinygrad import Tensor, Device, dtypes, GlobalCounters
++from tinygrad import Tensor, dtypes, GlobalCounters
+ from test.helpers import assert_kernel_count
+ 
+ class TestSetitemInto(unittest.TestCase):
+@@ -139,16 +139,23 @@ class TestSetitemInto(unittest.TestCase):
+     assert_kernel_count(1)
+     self.assertEqual(GlobalCounters.global_mem, 100*4)  # full buffer written
+ 
+-  @unittest.skipUnless(Device.DEFAULT != "CPU", "source must be on another device")
+   def test_setitem_slice_assign_from_other_device(self):
+-    # NOTE: this is 2 kernels, the cross-device copy should fuse with the assign into one
+     a = Tensor.ones(20, device="CPU")
+-    b = Tensor.arange(20).float().clone()
++    b = Tensor.arange(20).float().clone("CPU:1")
+     Tensor.realize(a, b)
+     GlobalCounters.reset()
+     a[10:12].assign(b[13:15].to(a.device)).realize()
+-    assert_kernel_count(2)
++    assert_kernel_count(1)
++    self.assertEqual(GlobalCounters.global_mem, 2*4)
+     self.assertListEqual(a.tolist(), [1.0]*10 + [13.0, 14.0] + [1.0]*8)
+ 
++  def test_setitem_slice_assign_from_other_device_noncontiguous(self):
++    a = Tensor.zeros(4, 4, device="CPU").contiguous().realize()
++    b = Tensor.arange(4, dtype=dtypes.float32).reshape(2, 2).clone("CPU:1").realize()
++    GlobalCounters.reset()
++    a[1:3, 1:3].assign(b.to(a.device)).realize()
++    assert_kernel_count(2)
++    self.assertListEqual(a.tolist(), [[0.0]*4, [0.0, 0.0, 1.0, 0.0], [0.0, 2.0, 3.0, 0.0], [0.0]*4])
++
+ if __name__ == '__main__':
+   unittest.main()
+diff --git a/tinygrad/engine/jit.py b/tinygrad/engine/jit.py
+index 72fbd9a..9f7ce7b 100644
+--- a/tinygrad/engine/jit.py
++++ b/tinygrad/engine/jit.py
+@@ -7,7 +7,7 @@ from tinygrad.dtype import DType
+ from tinygrad.uop.ops import UOp, PatternMatcher, Variable, sym_infer, Ops, rewrite_group, graph_rewrite
+ from tinygrad.renderer import Estimates
+ from tinygrad.engine.realize import capturing, compile_linear, link_linear, run_linear, graph_cache, estimate_uop, get_runtime
+-from tinygrad.engine.realize import unwrap_multi, resolve_params, get_call_arg_uops, get_call_written_bufs
++from tinygrad.engine.realize import unwrap_multi, resolve_params, get_call_arg_uops, get_call_written_bufs, _resolve
+ from tinygrad.schedule.memory import memory_plan_rewrite, _collect_bufs
+ from tinygrad.nn.state import get_parameters
+ from tinygrad.uop.movement import mop_cleanup
+@@ -16,7 +16,7 @@ from dataclasses import dataclass
+ def prune_linear(linear:UOp, needed:set[UOp]) -> tuple[UOp, UOp]:
+   kept, onetime = [], []
+   for si in linear.src:
+-    si_bufs = {b for src in si.src[1:] for b in _collect_bufs(src)}
++    si_bufs = {b for src in si.src[1:] for b in _collect_bufs(src.storage_base)}
+     if not si_bufs.isdisjoint(needed):
+       kept.append(si)
+       needed |= si_bufs
+@@ -91,13 +91,14 @@ class GraphRunner:
+     self.linear = linear.src[0]
+     self.calls: list[tuple[int, UOp, list[Buffer], dict[str, int]]] = []
+     self.runtimes: list[Any|None] = []
+-    self.uop_replace: list[list[tuple[int, int]]] = []
++    self.uop_replace: list[list[tuple[int, UOp]]] = []
+     for call in self.linear.src:
+-      replace = [(p, b.arg.slot) for p, b in enumerate(get_call_arg_uops(call)) if b.op is Ops.PARAM]
++      buffer_replace = [(p, b) for p, b in enumerate(get_call_arg_uops(call))
++                        if b.op is Ops.PARAM or (call.src[0].op is Ops.COPY and _resolve(b, input_uops) is not b)]
+       for dev_idx, (bufs, device_vars) in enumerate(unwrap_multi(call, resolve_params(call, input_uops))):
+         self.calls.append((dev_idx, call.src[0], [b.ensure_allocated() for b in bufs], device_vars))
+         self.runtimes.append(get_runtime(bufs[0].device, call.src[0]) if call.src[0].op is Ops.PROGRAM else None)
+-        self.uop_replace.append(replace)
++        self.uop_replace.append(buffer_replace)
+ 
+     self.var_vals_replace:dict[int, list[tuple[int, int]]] = {}
+     self.launch_dims_replace:dict[int, tuple[int|None, int|None]] = {}
+@@ -128,6 +129,11 @@ class GraphRunner:
+ 
+   def __call__(self, input_uops:tuple[UOp, ...], var_vals:dict[str, int], wait=False) -> float|None: raise NotImplementedError("override this")
+ 
++  def updated_buffers(self, j:int, input_uops:tuple[UOp, ...]):
++    for pos, u in self.uop_replace[j]:
++      buf = _resolve(u, input_uops).buffer
++      yield pos, (buf.bufs[self.calls[j][0]] if isinstance(buf, MultiBuffer) else buf).ensure_allocated()
++
+   def updated_vars(self, var_vals: dict[str, int]):
+     vals = [var_vals[v] for v in self.vars]
+     for j, vidxs in self.var_vals_replace.items():
+diff --git a/tinygrad/runtime/graph/cuda.py b/tinygrad/runtime/graph/cuda.py
+index ed228d1..1869a26 100644
+--- a/tinygrad/runtime/graph/cuda.py
++++ b/tinygrad/runtime/graph/cuda.py
+@@ -2,7 +2,7 @@ import ctypes
+ from typing import Any, cast
+ import tinygrad.runtime.autogen.cuda as cuda
+ from tinygrad.runtime.support.c import init_c_var
+-from tinygrad.device import Device, MultiBuffer
++from tinygrad.device import Device
+ from tinygrad.uop.ops import UOp, Ops
+ from tinygrad.runtime.ops_cuda import CUDADevice, check, encode_args, cu_time_execution
+ from tinygrad.engine.jit import MultiGraphRunner
+@@ -47,9 +47,8 @@ class CUDAGraph(MultiGraphRunner):
+   def __call__(self, input_uops:tuple[UOp, ...], var_vals:dict[str, int], wait=False):
+     # Update buffers in the c_args struct.
+     for j in self.updatable:
+-      (_, params, c_args, is_copy), dev_idx = self.nodes[j], self.calls[j][0]
+-      for pos, iidx in self.uop_replace[j]:
+-        buf = b.bufs[dev_idx] if isinstance(b:=input_uops[iidx].buffer, MultiBuffer) else b
++      _, params, c_args, is_copy = self.nodes[j]
++      for pos, buf in self.updated_buffers(j, input_uops):
+         if not is_copy: setattr(c_args, f'f{pos}', buf._buf)
+         else: setattr(params, 'srcDevice' if pos == 1 else 'dstDevice', buf._buf)
+ 
+diff --git a/tinygrad/runtime/graph/metal.py b/tinygrad/runtime/graph/metal.py
+index 80b99c4..12d1eea 100644
+--- a/tinygrad/runtime/graph/metal.py
++++ b/tinygrad/runtime/graph/metal.py
+@@ -1,7 +1,7 @@
+ from typing import Any, cast
+ import ctypes, decimal, struct
+ from tinygrad.helpers import dedup, getenv, unwrap, PROFILE
+-from tinygrad.device import Buffer, Device, ProfileGraphEntry, ProfileGraphEvent
++from tinygrad.device import Device, ProfileGraphEntry, ProfileGraphEvent
+ from tinygrad.uop.ops import UOp, Ops
+ from tinygrad.engine.jit import GraphRunner, GraphException
+ from tinygrad.runtime.ops_metal import MetalDevice, wait_check, to_ns_str
+@@ -61,8 +61,7 @@ class MetalGraph(GraphRunner):
+     updated_bufs = []
+     for j in self.updatable:
+       computeCommand = self.icb.indirectComputeCommandAtIndex(j)
+-      for pos, iidx in self.uop_replace[j]:
+-        buf = cast(Buffer, input_uops[iidx].buffer)
++      for pos, buf in self.updated_buffers(j, input_uops):
+         computeCommand.setKernelBuffer_offset_atIndex(buf._buf.buf, buf._buf.offset, pos)
+         updated_bufs.append(buf._buf.buf)
+ 
+diff --git a/tinygrad/tensor.py b/tinygrad/tensor.py
+index 52f056c..fdf6141 100644
+--- a/tinygrad/tensor.py
++++ b/tinygrad/tensor.py
+@@ -144,6 +144,8 @@ pm_early_transform_tensor_graph = PatternMatcher([
+   # fold MOPS+BITCAST over BUFFER into SHRINK when movement ops collapse to contiguous range
+   (UPat(Ops.COPY, src=(UPat(GroupOp.Movement|{Ops.BITCAST}, name="src"),), name="c"), contiguous_mops_to_view),
+   (UPat(Ops.STORE, src=(UPat(Ops.BITCAST, name="src"), UPat()), name="c", allow_any_len=True), contiguous_mops_to_view),
++  (UPat(Ops.STORE, src=(UPat(GroupOp.Movement, name="src"), UPat(Ops.COPY, name="cpy")), name="c"),
++   lambda ctx,c,src,cpy: contiguous_mops_to_view(ctx, c, src) if src.base.op is Ops.BUFFER and cpy.src[0].device != c.device else None),
+ 
+   # remove contiguous on movement ops before a copy on disk
+   (UPat(GroupOp.Movement-{Ops.SHRINK, Ops.RESHAPE}, name="x").f(Ops.COPY, name="cont").f(Ops.COPY, name="copy"), lambda x,cont,copy:
