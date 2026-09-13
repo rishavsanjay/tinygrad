@@ -1,4 +1,4 @@
-name: plugin clone helper
+name: sliced assign final validation
 
 on:
   push:
@@ -8,24 +8,64 @@ on:
 permissions:
   contents: read
 
+env:
+  CACHE_VERSION: '19'
+  PYTHONPATH: ${{ github.workspace }}
+  CHECK_OOB: 1
+
 jobs:
-  snapshot:
+  lint:
+    name: Ruff and mypy
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - name: Checkout target branch
+      - name: Checkout exact candidate
         uses: actions/checkout@v6
         with:
-          ref: codex/sliced-assign-final
+          ref: 3f5113c65116ce9da71c5f6831ba4c6aaf786054
           fetch-depth: 0
-      - name: Fetch current upstream
-        run: |
-          git remote add upstream https://github.com/tinygrad/tinygrad.git
-          git fetch upstream master
-      - name: Pack checkout
-        run: tar -czf /tmp/tinygrad-repo.tgz .
-      - name: Upload checkout
-        uses: actions/upload-artifact@v4
+      - name: Setup lint environment
+        uses: ./.github/actions/setup-tinygrad
         with:
-          name: tinygrad-repo-with-upstream
-          path: /tmp/tinygrad-repo.tgz
-          retention-days: 1
+          key: linting-only
+          python-version: '3.11'
+          deps: linting
+      - name: Diff check
+        run: git diff --check 947882518442f7710d28bea5c3f4b1fe887fbb7a HEAD
+      - name: Ruff changed files
+        run: >-
+          python -m ruff check
+          tinygrad/schedule/prepare.py
+          tinygrad/schedule/__init__.py
+          test/unit/test_setitem_schedule.py
+          tinygrad/engine/jit.py
+          tinygrad/runtime/graph/cuda.py
+          tinygrad/runtime/graph/metal.py
+          test/unit/test_jit.py
+          test/backend/test_graph.py
+      - name: Mypy repository
+        run: python -m mypy --lineprecision-report .
+
+  tests:
+    name: Relevant CPU tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v6
+        with:
+          ref: 3f5113c65116ce9da71c5f6831ba4c6aaf786054
+          fetch-depth: 0
+      - name: Setup test environment
+        uses: ./.github/actions/setup-tinygrad
+        with:
+          key: sliced-assign-final
+          python-version: '3.11'
+          deps: testing_unit
+      - name: Relevant tests
+        run: >-
+          DEV=CPU python -m pytest -q
+          test/unit/test_setitem_schedule.py
+          test/unit/test_schedule_cache.py
+          test/unit/test_jit.py
+          test/backend/test_graph.py
