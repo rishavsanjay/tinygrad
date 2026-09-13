@@ -1,0 +1,27 @@
+name: plugin clone helper
+
+on:
+  push:
+    branches:
+      - codex/plugin-clone-helper
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v6
+        with:
+          ref: codex/sliced-assign-final
+          fetch-depth: 0
+      - name: Pack checkout
+        run: tar -czf /tmp/tinygrad-repo.tgz .
+      - name: Upload checkout
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinygrad-repo
+          path: /tmp/tinygrad-repo.tgz
+          retention-days: 1
