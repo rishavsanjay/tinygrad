@@ -1,39 +1,19 @@
-name: sliced-assign-audit
+name: export-current-upstream
 on:
   push:
     branches: [audit-export]
 jobs:
-  audit:
+  export:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: sliced-assign
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install test deps
-        run: python -m pip install -q -e . numpy pytest
-      - name: Show uop_replace consumers
-        run: grep -RIn "uop_replace" tinygrad extra test | tee /tmp/uop-replace.txt
-      - name: Compile touched modules
-        run: python -m py_compile tinygrad/engine/jit.py tinygrad/runtime/graph/cuda.py tinygrad/runtime/graph/metal.py extra/hcq1/graph.py tinygrad/tensor.py
-      - name: Run sliced assign and JIT tests
-        env:
-          DEV: CPU
-        run: python -m pytest -q test/unit/test_setitem_schedule.py test/unit/test_jit.py
-      - name: Run graph tests
-        env:
-          DEV: CPU
-        run: python -m pytest -q test/backend/test_graph.py
+          repository: tinygrad/tinygrad
+          ref: 87f88a072be9ab54e7534ab978b1e64c4f4d9b37
       - name: Pack source
-        if: always()
-        run: tar --exclude=.git -czf /tmp/tinygrad-sliced-assign-rebased.tar.gz .
+        run: tar --exclude=.git -czf /tmp/tinygrad-upstream-current.tar.gz .
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: tinygrad-sliced-assign-rebased
-          path: |
-            /tmp/tinygrad-sliced-assign-rebased.tar.gz
-            /tmp/uop-replace.txt
+          name: tinygrad-upstream-current
+          path: /tmp/tinygrad-upstream-current.tar.gz
           retention-days: 1
