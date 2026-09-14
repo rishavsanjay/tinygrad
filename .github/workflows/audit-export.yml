@@ -1,0 +1,16 @@
+name: audit-export
+on:
+  push:
+    branches: [audit-export]
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pack source
+        run: tar --exclude=.git --exclude=.github/workflows/audit-export.yml -czf /tmp/tinygrad-sliced-assign.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tinygrad-sliced-assign
+          path: /tmp/tinygrad-sliced-assign.tar.gz
+          retention-days: 1
