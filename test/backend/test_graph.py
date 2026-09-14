@@ -66,6 +66,29 @@ class TestGraph(unittest.TestCase):
     if not issubclass(graph, MultiGraphRunner): self.skipTest("graph is not supported (not MultiGraphRunner)")
     if not hasattr(d.allocator, '_transfer') or not d.allocator.supports_transfer: self.skipTest("device is not supported (no transfers)")
 
+  @needs_second_gpu
+  def test_copy_graph_rebinds_nonzero_views(self):
+    self.skip_if_not_multigraph()
+    self.skip_if_no_offset()
+    d0, d1, size, n = Device.DEFAULT, f"{Device.DEFAULT}:1", 16, 4
+    dst, src = UOp.param(0, dtypes.int, size, d0), UOp.param(1, dtypes.int, size, d1)
+    copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int, n, d1),), arg=d0)
+    call = copy.call(dst.shrink(((3, 3+n),)), src.shrink(((5, 5+n),)))
+    graph_ast = UOp(Ops.CUSTOM_FUNCTION, src=(UOp(Ops.LINEAR, src=(call,)),), arg="graph")
+
+    captured = (make_buffer(d0, size, fill=True), make_buffer(d1, size, fill=True))
+    captured_dst = np.frombuffer(captured[0].as_memoryview(), np.int32).copy()
+    graph = Device[d0].graph(graph_ast, tuple(UOp.from_buffer(x) for x in captured))
+
+    replay = (make_buffer(d0, size, fill=True), make_buffer(d1, size, fill=True))
+    expected = np.frombuffer(replay[0].as_memoryview(), np.int32).copy()
+    source = np.frombuffer(replay[1].as_memoryview(), np.int32).copy()
+    graph(tuple(UOp.from_buffer(x) for x in replay), {})
+    Device[d0].synchronize()
+    expected[3:3+n] = source[5:5+n]
+    np.testing.assert_equal(expected, np.frombuffer(replay[0].as_memoryview(), np.int32))
+    np.testing.assert_equal(captured_dst, np.frombuffer(captured[0].as_memoryview(), np.int32))
+
   def test_order_2_writes_to_same_buf(self):
     d0 = Device.DEFAULT
     b = [make_buffer(d0, fill=True) for _ in range(5)]

@@ -1,5 +1,5 @@
 import unittest
-from tinygrad import Tensor, Device, dtypes, GlobalCounters
+from tinygrad import Tensor, dtypes, GlobalCounters
 from test.helpers import assert_kernel_count
 
 class TestSetitemInto(unittest.TestCase):
@@ -139,16 +139,45 @@ class TestSetitemInto(unittest.TestCase):
     assert_kernel_count(1)
     self.assertEqual(GlobalCounters.global_mem, 100*4)  # full buffer written
 
-  @unittest.skipUnless(Device.DEFAULT != "CPU", "source must be on another device")
   def test_setitem_slice_assign_from_other_device(self):
-    # NOTE: this is 2 kernels, the cross-device copy should fuse with the assign into one
     a = Tensor.ones(20, device="CPU")
-    b = Tensor.arange(20).float().clone()
+    b = Tensor.arange(20).float().clone("CPU:1")
     Tensor.realize(a, b)
     GlobalCounters.reset()
     a[10:12].assign(b[13:15].to(a.device)).realize()
-    assert_kernel_count(2)
+    assert_kernel_count(1)
+    self.assertEqual(GlobalCounters.global_mem, 2*4)
     self.assertListEqual(a.tolist(), [1.0]*10 + [13.0, 14.0] + [1.0]*8)
+
+  def test_cross_device_contiguous_compositions(self):
+    for width in (1, 3, 8):
+      for start, stop in ((0, 1), (1, 3), (3, 4), (0, 4)):
+        for layout in ("rows", "nested", "singleton_permute", "inverse_permute"):
+          with self.subTest(width=width, start=start, stop=stop, layout=layout):
+            size = (stop-start)*width
+            before = list(range(4*width))
+            values = list(range(100, 100+size+2))
+            dst = Tensor(before, dtype=dtypes.int32, device="CPU").realize()
+            src = Tensor(values, dtype=dtypes.int32, device="CPU:1").realize()
+            view = dst.reshape(4, width)[start:stop]
+            if layout == "nested": view = dst.reshape(2, 2, width).reshape(4, width)[start:][:(stop-start)]
+            if layout == "singleton_permute": view = view.reshape(stop-start, 1, width).permute(1, 0, 2)
+            if layout == "inverse_permute": view = view.permute(1, 0).permute(1, 0)
+            GlobalCounters.reset()
+            view.assign(src[1:1+size].reshape(view.shape).to(view.device)).realize()
+            assert_kernel_count(1)
+            expected = before[:]
+            expected[start*width:stop*width] = values[1:1+size]
+            self.assertListEqual(dst.tolist(), expected)
+            self.assertListEqual(src.tolist(), values)
+
+  def test_setitem_slice_assign_from_other_device_noncontiguous(self):
+    a = Tensor.zeros(4, 4, device="CPU").contiguous().realize()
+    b = Tensor.arange(4, dtype=dtypes.float32).reshape(2, 2).clone("CPU:1").realize()
+    GlobalCounters.reset()
+    a[1:3, 1:3].assign(b.to(a.device)).realize()
+    assert_kernel_count(2)
+    self.assertListEqual(a.tolist(), [[0.0]*4, [0.0, 0.0, 1.0, 0.0], [0.0, 2.0, 3.0, 0.0], [0.0]*4])
 
 if __name__ == '__main__':
   unittest.main()

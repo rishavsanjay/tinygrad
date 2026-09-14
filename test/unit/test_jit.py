@@ -12,6 +12,19 @@ def _simple_test(add, extract=lambda x: x, N=10):
   assert_jit_cache_len(add, 1)
 
 class TestJit(unittest.TestCase):
+  def test_graph_rebinds_copy_views(self):
+    from tinygrad.engine.jit import GraphRunner, create_graph_call
+    from tinygrad.uop.ops import Ops
+    dst, src = UOp.param(0, dtypes.int32, 6, "CPU"), UOp.param(1, dtypes.int32, 5, "CPU:1")
+    copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int32, 2, "CPU:1"),), arg="CPU")
+    call = copy.call(dst.shrink(((2, 4),)), src.shrink(((1, 3),)))
+    old = (Tensor.zeros(6, dtype=dtypes.int32, device="CPU").realize(), Tensor.zeros(5, dtype=dtypes.int32, device="CPU:1").realize())
+    graph = GraphRunner(create_graph_call([call]).src[0], tuple(x.uop for x in old))
+    new = (Tensor.zeros(6, dtype=dtypes.int32, device="CPU").realize(), Tensor.zeros(5, dtype=dtypes.int32, device="CPU:1").realize())
+    bufs = dict(graph.updated_buffers(0, tuple(x.uop for x in new)))
+    self.assertEqual((bufs[0].offset, bufs[1].offset), (8, 4))
+    self.assertEqual((bufs[0].base, bufs[1].base), (new[0].uop.buffer.base, new[1].uop.buffer.base))
+
   def test_jitbeam_triggers_beam(self):
     from unittest.mock import patch
     from tinygrad.helpers import getenv as _getenv
@@ -408,6 +421,15 @@ class TestJitPrune(unittest.TestCase):
       out = w2_prune(a)
       np.testing.assert_allclose(out.tolist(), [x*2+y for x,y in zip(weights.tolist(), a.tolist())])
     assert_jit_cache_len(w2_prune, 1)
+
+  def test_prune_slice_assign_from_fixed_source(self):
+    src = Tensor([7, 8], device="CPU:1").realize()
+    @TinyJit(prune=True)
+    def write(dst): dst[1:3].assign(src.to(dst.device)).realize()
+    for fill in range(4):
+      dst = Tensor.full(4, fill, dtype=dtypes.int32, device="CPU").realize()
+      write(dst)
+      self.assertListEqual(dst.tolist(), [fill, 7, 8, fill])
 
 
 class TestJitInsideJit(unittest.TestCase):
