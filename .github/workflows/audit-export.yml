@@ -1,22 +1,39 @@
-name: audit-rebase
+name: sliced-assign-audit
 on:
   push:
     branches: [audit-export]
-permissions:
-  contents: write
 jobs:
-  rebase:
+  audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: sliced-assign
-          fetch-depth: 0
-      - name: Rebase onto upstream master
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add upstream https://github.com/tinygrad/tinygrad.git || true
-          git fetch upstream master
-          git rebase upstream/master
-          git push origin HEAD:sliced-assign --force-with-lease
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test deps
+        run: python -m pip install -q -e . numpy pytest
+      - name: Show uop_replace consumers
+        run: grep -RIn "uop_replace" tinygrad extra test | tee /tmp/uop-replace.txt
+      - name: Compile touched modules
+        run: python -m py_compile tinygrad/engine/jit.py tinygrad/runtime/graph/cuda.py tinygrad/runtime/graph/metal.py extra/hcq1/graph.py tinygrad/tensor.py
+      - name: Run sliced assign and JIT tests
+        env:
+          DEV: CPU
+        run: python -m pytest -q test/unit/test_setitem_schedule.py test/unit/test_jit.py
+      - name: Run graph tests
+        env:
+          DEV: CPU
+        run: python -m pytest -q test/backend/test_graph.py
+      - name: Pack source
+        if: always()
+        run: tar --exclude=.git -czf /tmp/tinygrad-sliced-assign-rebased.tar.gz .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tinygrad-sliced-assign-rebased
+          path: |
+            /tmp/tinygrad-sliced-assign-rebased.tar.gz
+            /tmp/uop-replace.txt
+          retention-days: 1
