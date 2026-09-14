@@ -144,6 +144,8 @@ pm_early_transform_tensor_graph = PatternMatcher([
   # fold MOPS+BITCAST over BUFFER into SHRINK when movement ops collapse to contiguous range
   (UPat(Ops.COPY, src=(UPat(GroupOp.Movement|{Ops.BITCAST}, name="src"),), name="c"), contiguous_mops_to_view),
   (UPat(Ops.STORE, src=(UPat(Ops.BITCAST, name="src"), UPat()), name="c", allow_any_len=True), contiguous_mops_to_view),
+  (UPat(Ops.STORE, src=(UPat(GroupOp.Movement, name="src"), UPat(Ops.COPY, name="cpy")), name="c"),
+   lambda ctx,c,src,cpy: contiguous_mops_to_view(ctx, c, src) if src.base.op is Ops.BUFFER and cpy.src[0].device != c.device else None),
 
   # remove contiguous on movement ops before a copy on disk
   (UPat(GroupOp.Movement-{Ops.SHRINK, Ops.RESHAPE}, name="x").f(Ops.COPY, name="cont").f(Ops.COPY, name="copy"), lambda x,cont,copy:
