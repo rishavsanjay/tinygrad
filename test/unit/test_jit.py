@@ -15,12 +15,12 @@ class TestJit(unittest.TestCase):
   def test_graph_rebinds_copy_views(self):
     from tinygrad.engine.jit import GraphRunner, create_graph_call
     from tinygrad.uop.ops import Ops
-    dst, src = UOp.param(0, dtypes.int32, 6, "CPU"), UOp.param(1, dtypes.int32, 5, "CPU:1")
+    dst, src = UOp.param(0, dtypes.uint8, 24, "CPU"), UOp.param(1, dtypes.uint8, 20, "CPU:1")
     copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int32, 2, "CPU:1"),), arg="CPU")
-    call = copy.call(dst.shrink(((2, 4),)), src.shrink(((1, 3),)))
-    old = (Tensor.zeros(6, dtype=dtypes.int32, device="CPU").realize(), Tensor.zeros(5, dtype=dtypes.int32, device="CPU:1").realize())
+    call = copy.call(dst.shrink(((8, 16),)).bitcast(dtypes.int32), src.shrink(((4, 12),)).bitcast(dtypes.int32))
+    old = (Tensor.zeros(24, dtype=dtypes.uint8, device="CPU").realize(), Tensor.zeros(20, dtype=dtypes.uint8, device="CPU:1").realize())
     graph = GraphRunner(create_graph_call([call]).src[0], tuple(x.uop for x in old))
-    new = (Tensor.zeros(6, dtype=dtypes.int32, device="CPU").realize(), Tensor.zeros(5, dtype=dtypes.int32, device="CPU:1").realize())
+    new = (Tensor.zeros(24, dtype=dtypes.uint8, device="CPU").realize(), Tensor.zeros(20, dtype=dtypes.uint8, device="CPU:1").realize())
     bufs = dict(graph.updated_buffers(0, tuple(x.uop for x in new)))
     self.assertEqual((bufs[0].offset, bufs[1].offset), (8, 4))
     self.assertEqual((bufs[0].base, bufs[1].base), (new[0].uop.buffer.base, new[1].uop.buffer.base))
