@@ -1,16 +1,22 @@
-name: audit-export
+name: audit-rebase
 on:
   push:
     branches: [audit-export]
+permissions:
+  contents: write
 jobs:
-  export:
+  rebase:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Pack source
-        run: tar --exclude=.git --exclude=.github/workflows/audit-export.yml -czf /tmp/tinygrad-sliced-assign.tar.gz .
-      - uses: actions/upload-artifact@v4
         with:
-          name: tinygrad-sliced-assign
-          path: /tmp/tinygrad-sliced-assign.tar.gz
-          retention-days: 1
+          ref: sliced-assign
+          fetch-depth: 0
+      - name: Rebase onto upstream master
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/tinygrad/tinygrad.git || true
+          git fetch upstream master
+          git rebase upstream/master
+          git push origin HEAD:sliced-assign --force-with-lease
