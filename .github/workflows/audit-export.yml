@@ -1,19 +1,62 @@
-name: export-latest-upstream
+name: finalize-sliced-assign
 on:
   push:
     branches: [audit-export]
+
+permissions:
+  contents: write
+
 jobs:
-  export:
+  finalize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: tinygrad/tinygrad
-          ref: 289656f6e88e94ecce8dfb1dcf5378fccf577d0d
-      - name: Pack source
-        run: tar --exclude=.git -czf /tmp/tinygrad-latest.tar.gz .
-      - uses: actions/upload-artifact@v4
+          ref: audit-export
+          fetch-depth: 0
+
+      - name: Reconstruct audited patch
+        run: |
+          cat .audit/sliced-assign.part00.b64               .audit/sliced-assign.part01.b64               .audit/sliced-assign.part02.b64               .audit/sliced-assign.part03.b64               .audit/sliced-assign.part04.b64 > /tmp/sliced-assign.patch.b64
+          base64 -d /tmp/sliced-assign.patch.b64 > /tmp/sliced-assign.patch
+          echo "9bf77d5d43131804c9b56c67088972990cb05077d5c5050e02777ce01bc54336  /tmp/sliced-assign.patch" | sha256sum -c -
+
+      - name: Rebase branch onto exact upstream
+        run: |
+          git fetch https://github.com/tinygrad/tinygrad.git 289656f6e88e94ecce8dfb1dcf5378fccf577d0d
+          git checkout -B sliced-assign FETCH_HEAD
+          git apply --check /tmp/sliced-assign.patch
+          git apply /tmp/sliced-assign.patch
+          git diff --check
+          git config user.name "Rishav Sanjay"
+          git config user.email "83537945+rishavsanjay@users.noreply.github.com"
+          git add extra/hcq1/graph.py                   test/backend/test_graph.py                   test/device/test_hcq2.py                   test/unit/test_jit.py                   test/unit/test_setitem_schedule.py                   tinygrad/engine/jit.py                   tinygrad/engine/realize.py                   tinygrad/runtime/graph/cuda.py                   tinygrad/runtime/graph/metal.py                   tinygrad/runtime/ops_amd.py                   tinygrad/runtime/ops_nv.py                   tinygrad/runtime/support/hcq2.py                   tinygrad/schedule/__init__.py                   tinygrad/schedule/prepare.py                   tinygrad/tensor.py                   tinygrad/uop/ops.py
+          git commit -m "robust single-kernel sliced assign"
+
+      - uses: actions/setup-python@v5
         with:
-          name: tinygrad-latest
-          path: /tmp/tinygrad-latest.tar.gz
-          retention-days: 1
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install -q -e . numpy pytest
+
+      - name: CPU regressions
+        env:
+          DEV: CPU
+        run: |
+          python -m pytest -q test/null/test_uops.py test/null/test_symbolic_tensor.py test/unit/test_jit.py test/unit/test_setitem_schedule.py
+
+      - name: HCQ2 AMD dynamic replay
+        env:
+          DEV: MOCK+AMD
+        run: |
+          python -m pytest -q             test/device/test_hcq2.py::TestHCQ2Schedule::test_dynamic_copy_vars             test/device/test_hcq2.py::TestHCQ2Schedule::test_jit_symbolic
+
+      - name: HCQ2 NV dynamic replay
+        env:
+          DEV: MOCK+NV
+        run: |
+          python -m pytest -q             test/device/test_hcq2.py::TestHCQ2Schedule::test_dynamic_copy_vars             test/device/test_hcq2.py::TestHCQ2Schedule::test_jit_symbolic
+
+      - name: Push fork branch
+        run: git push origin HEAD:sliced-assign --force
