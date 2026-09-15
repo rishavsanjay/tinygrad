@@ -1,4 +1,4 @@
-name: export-current-upstream
+name: export-latest-upstream
 on:
   push:
     branches: [audit-export]
@@ -9,11 +9,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: tinygrad/tinygrad
-          ref: 87f88a072be9ab54e7534ab978b1e64c4f4d9b37
+          ref: 289656f6e88e94ecce8dfb1dcf5378fccf577d0d
       - name: Pack source
-        run: tar --exclude=.git -czf /tmp/tinygrad-upstream-current.tar.gz .
+        run: tar --exclude=.git -czf /tmp/tinygrad-latest.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
-          name: tinygrad-upstream-current
-          path: /tmp/tinygrad-upstream-current.tar.gz
+          name: tinygrad-latest
+          path: /tmp/tinygrad-latest.tar.gz
           retention-days: 1
