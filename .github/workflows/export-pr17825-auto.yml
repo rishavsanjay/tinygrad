@@ -1,0 +1,24 @@
+name: export-pr17825-auto
+on:
+  push:
+    branches: [audit-pr17825]
+    paths: [.github/workflows/export-pr17825-auto.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Export rebased-auto branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch origin pr-17825-rebased-auto
+          git archive --format=tar.gz --output=/tmp/pr17825-auto.tar.gz origin/pr-17825-rebased-auto
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr17825-auto-source
+          path: /tmp/pr17825-auto.tar.gz
