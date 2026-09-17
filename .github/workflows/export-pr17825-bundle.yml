@@ -15,6 +15,8 @@ jobs:
         run: |
           git remote add upstream https://github.com/tinygrad/tinygrad.git || true
           git fetch upstream master
+          git branch -f pr-17825 origin/pr-17825
+          git branch -f pr-17825-pre-rebase origin/pr-17825-pre-rebase
           git branch -f upstream-master upstream/master
           git bundle create /tmp/tinygrad-pr17825.bundle pr-17825 pr-17825-pre-rebase upstream-master
           git bundle verify /tmp/tinygrad-pr17825.bundle
