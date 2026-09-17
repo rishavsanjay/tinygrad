@@ -1,0 +1,27 @@
+name: apply-pr17825-port
+on:
+  push:
+    branches: [audit-pr17825]
+    paths: [.github/transport/pr17825-ready]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply locally-tested patch and push audited branch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat .github/transport/pr17825-part-00 .github/transport/pr17825-part-01 .github/transport/pr17825-part-02 > /tmp/pr17825-port.patch
+          echo '48207c95056d2e15b1676c3f193dd4c761556d586d9c52d0f323cec3eae3f1e3  /tmp/pr17825-port.patch' | sha256sum -c -
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/tinygrad/tinygrad.git || true
+          git fetch upstream master
+          git checkout -B pr-17825-audited upstream/master
+          git am /tmp/pr17825-port.patch
+          git push origin HEAD:refs/heads/pr-17825-audited --force
