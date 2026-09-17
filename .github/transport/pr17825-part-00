@@ -1,0 +1,299 @@
+From 1300d994610f462bde648030c327bfbe3e00671b Mon Sep 17 00:00:00 2001
+From: OpenAI <noreply@openai.com>
+Date: Thu, 17 Sep 2026 11:12:29 +0000
+Subject: [PATCH] runtime: support interleaved kernel buffers and args
+
+---
+ extra/hcq1/hcq.py                       |   6 +-
+ test/backend/test_commutative_params.py | 194 ++++++++++++++++++++++++
+ tinygrad/device.py                      |  22 ++-
+ tinygrad/runtime/graph/cuda.py          |  19 ++-
+ tinygrad/runtime/graph/metal.py         |  29 ++--
+ tinygrad/runtime/ops_amd.py             |   9 +-
+ tinygrad/runtime/ops_cl.py              |   5 +-
+ tinygrad/runtime/ops_cpu.py             |  11 +-
+ tinygrad/runtime/ops_cuda.py            |  11 +-
+ tinygrad/runtime/ops_dsp.py             |  17 ++-
+ tinygrad/runtime/ops_hip.py             |  11 +-
+ tinygrad/runtime/ops_metal.py           |   7 +-
+ tinygrad/runtime/ops_nv.py              |  13 +-
+ tinygrad/runtime/ops_qcom.py            |  14 +-
+ tinygrad/runtime/ops_webgpu.py          |  10 +-
+ tinygrad/runtime/support/hcq2.py        |   2 +-
+ tinygrad/uop/ops.py                     |  10 +-
+ 17 files changed, 314 insertions(+), 76 deletions(-)
+ create mode 100644 test/backend/test_commutative_params.py
+
+diff --git a/extra/hcq1/hcq.py b/extra/hcq1/hcq.py
+index a8cf67498..2b33d1d25 100644
+--- a/extra/hcq1/hcq.py
++++ b/extra/hcq1/hcq.py
+@@ -4,6 +4,7 @@ import contextlib, decimal, statistics, time, ctypes, array, collections, iterto
+ from tinygrad.helpers import PROFILE, getenv, from_mv, cpu_profile, ProfileRangeEvent, unwrap
+ from tinygrad.helpers import suppress_finalizing, TracingKey
+ from tinygrad.device import BufferStorage, Buffer, BufferSpec, Compiled, Allocator, ProfileDeviceEvent, ProfileProgramEvent, Program, TinyELF
++from tinygrad.dtype import AddrSpace
+ from tinygrad.uop.ops import sym_infer, sint, UOp
+ from tinygrad.runtime.support.memory import BumpAllocator, MMIOInterface
+ from tinygrad.renderer import Renderer
+@@ -291,10 +292,9 @@ class CLikeArgsState(HCQArgsState[ProgramType]):
+ 
+     if prefix is not None: self.buf.cpu_view().view(size=len(prefix) * 4, fmt='I')[:] = array.array('I', prefix)
+ 
+-    self.bind_sints_to_buf(*[b.va_addr for b in bufs], buf=self.buf, fmt='Q', offset=len(prefix or []) * 4)
+-    for v,(val_offset,dt) in zip(vals, TinyELF.iter_sig(prg.signature[-len(vals):], len(bufs) * 8)):
++    for v,(off,dt,addrspace) in zip(TinyELF.merge_args(prg.signature, [b.va_addr for b in bufs], vals), TinyELF.iter_sig(prg.signature)):
+       assert v is not None
+-      self.bind_sints_to_buf(v, buf=self.buf, fmt=dt.fmt, offset=len(prefix or []) * 4 + val_offset)
++      self.bind_sints_to_buf(v, buf=self.buf, fmt=dt.fmt if addrspace is AddrSpace.ALU else 'Q', offset=len(prefix or []) * 4 + off)
+ 
+ class HCQProgram(Program[HCQDeviceType]):
+   def __init__(self, args_state_t:Type[HCQArgsState], dev:HCQDeviceType, obj:TinyELF, kernargs_alloc_size:int, base:int|None=None):
+diff --git a/test/backend/test_commutative_params.py b/test/backend/test_commutative_params.py
+new file mode 100644
+index 000000000..8d493b309
+--- /dev/null
++++ b/test/backend/test_commutative_params.py
+@@ -0,0 +1,194 @@
++import ctypes
++import numpy as np
++import unittest
++from dataclasses import replace
++from types import SimpleNamespace
++from unittest.mock import patch
++from tinygrad import Tensor, Context, dtypes
++from tinygrad.device import Device, Buffer, TinyELF
++from tinygrad.dtype import AddrSpace
++from tinygrad.uop.ops import UOp, Ops, KernelInfo
++from tinygrad.codegen import to_program
++from tinygrad.engine.realize import get_runtime
++
++class TestCommutativeParams(unittest.TestCase):
++  def _test_template(self, out_slot:int, in_slot:int, variable_slots:tuple[int, ...], values:tuple[int, ...]):
++    output_uop = UOp.param(out_slot, dtypes.float32, shape=(4,))
++    input_uop = UOp.param(in_slot, dtypes.float32, shape=(4,))
++
++    variables = []
++    for index, slot in enumerate(variable_slots):
++      variable = UOp.variable(f"var_{index}", 0, 42, dtypes.int32, param=True)
++      variables.append(variable.replace(arg=replace(variable.arg, slot=slot)))
++
++    v_range = UOp.range(4, 0)
++    value = input_uop.index(v_range).load() * variables[0].cast(dtypes.float32)
++    for variable in variables[1:]: value = value + variable.cast(dtypes.float32)
++    value = output_uop.index(v_range).store(value).end(v_range)
++
++    kernel_name = f"commutative_params_order_{out_slot}_{in_slot}_" + "_".join(str(slot) for slot in variable_slots)
++    program = to_program(value.sink(arg=KernelInfo(name=kernel_name)), Device[Device.DEFAULT].renderer)
++
++    # to_elf must preserve the renderer's PARAM order while using compact source slots into bufs/vals.
++    params = tuple(u for u in program.src[1].src if u.op is Ops.PARAM)
++    gmap = {s:i for i,s in enumerate(program.arg.globals)}
++    vmap = {v.arg.slot:i for i,v in enumerate(program.arg.vars)}
++    expected_sig = tuple((u.arg.name, vmap[u.arg.slot] if u.addrspace is AddrSpace.ALU else gmap[u.arg.slot],
++                          u.dtype, u._shape, u.addrspace) for u in params)
++    self.assertEqual(program.to_elf().signature, expected_sig)
++
++    self.assertEqual(program.arg.globals, tuple(sorted((in_slot, out_slot))))
++    self.assertEqual(tuple(var.arg.slot for var in program.arg.vars), variable_slots)
++
++    input_data = np.arange(4, dtype=np.float32)
++    output_buf = Buffer(Device.DEFAULT, 4, dtypes.float32).allocate()
++    input_buf = Buffer(Device.DEFAULT, 4, dtypes.float32, initial_value=input_data.tobytes())
++
++    runtime = get_runtime(Device.DEFAULT, program)
++    global_size, local_size = program.arg.launch_dims({})
++    slot_to_buffer_map = {in_slot: input_buf, out_slot: output_buf}
++    device_specific_buffers = [slot_to_buffer_map[slot]._buf for slot in program.arg.globals]
++    runtime(*device_specific_buffers, global_size=global_size, local_size=local_size, vals=values, wait=True)
++
++    expected_answer = input_data * values[0] + sum(values[1:])
++    actual_answer = np.frombuffer(output_buf.as_memoryview(), dtype=np.float32)
++    np.testing.assert_equal(actual_answer, expected_answer)
++
++  def test_commutative_params(self):
++    # Includes sparse call slots and all useful B/S orderings.
++    cases = [
++      (0, 1, (2,), (3,)),       # B,B,S
++      (1, 0, (2,), (2,)),       # B,B,S with buffers reversed at construction
++      (1, 2, (0,), (3,)),       # S,B,B
++      (2, 1, (0,), (3,)),       # S,B,B with buffers reversed at construction
++      (0, 2, (1, 3), (4, 2)),   # B,S,B,S; sparse globals (0,2)
++      (3, 2, (0, 1), (2, 4)),   # S,S,B,B
++    ]
++    for case in cases:
++      with self.subTest(case=case): self._test_template(*case)
++
++  def test_params_beyond_abi_registers(self):
++    # x86 passes the first 6 integer/pointer params in registers, the rest go on the stack.
++    buffer_uops = [UOp.param(i, dtypes.float32, shape=(4,)) for i in range(8)]
++    v_range = UOp.range(4, 0)
++    value = buffer_uops[1].index(v_range).load()
++    for buffer_uop in buffer_uops[2:]: value = value + buffer_uop.index(v_range).load()
++    value = buffer_uops[0].index(v_range).store(value).end(v_range)
++    program = to_program(value.sink(arg=KernelInfo(name="params_beyond_abi_registers")), Device[Device.DEFAULT].renderer)
++
++    input_data = [np.full(4, i,dtype=np.float32) for i in range(1, 8)]
++    buffers = [Buffer(Device.DEFAULT, 4, dtypes.float32).allocate()]
++    buffers += [Buffer(Device.DEFAULT, 4, dtypes.float32, initial_value=data.tobytes()) for data in input_data]
++    global_size, local_size = program.arg.launch_dims({})
++    get_runtime(Device.DEFAULT, program)(*[b._buf for b in buffers], global_size=global_size, local_size=local_size, wait=True)
++    np.testing.assert_equal(np.frombuffer(buffers[0].as_memoryview(), dtype=np.float32), sum(input_data))
++
++  def test_merge_args_reuses_shared_buffer_slot(self):
++    # A single logical buffer may be rendered twice (for example image + flat view).
++    sig = (
++      (None, 0, dtypes.float32, (4,), AddrSpace.GLOBAL),
++      ("v", 0, dtypes.int32, (), AddrSpace.ALU),
++      (None, 0, dtypes.float32, (1, 1, 4), AddrSpace.GLOBAL),
++      (None, 1, dtypes.float32, (4,), AddrSpace.GLOBAL),
++    )
++    self.assertEqual(TinyELF.merge_args(sig, [0x1111, 0x2222], [7]), [0x1111, 7, 0x1111, 0x2222])
++
++  def test_iter_sig_mixed_alignment(self):
++    sig = (
++      ("a", 0, dtypes.int32, (), AddrSpace.ALU),
++      (None, 0, dtypes.float32, (4,), AddrSpace.GLOBAL),
++      ("b", 1, dtypes.int16, (), AddrSpace.ALU),
++      (None, 1, dtypes.float32, (4,), AddrSpace.GLOBAL),
++    )
++    self.assertEqual([(off, dt, a) for off,dt,a in TinyELF.iter_sig(sig)], [
++      (0, dtypes.int32, AddrSpace.ALU), (8, dtypes.float32, AddrSpace.GLOBAL),
++      (16, dtypes.int16, AddrSpace.ALU), (24, dtypes.float32, AddrSpace.GLOBAL)])
++
++  def test_amd_kernargs_mixed_order(self):
++    # AMD moved off the old HCQ1 args state after the original PR; keep its current HCQ2 kernarg path ABI-ordered too.
++    output_uop, input_uop = UOp.param(0, dtypes.float32, shape=(4,)), UOp.param(2, dtypes.float32, shape=(4,))
++    kernel_var = UOp.variable("amd_v", 0, 42, dtypes.int32,param=True)
++    kernel_var = kernel_var.replace(arg=replace(kernel_var.arg, slot=1))
++    v_range = UOp.range(4, 0)
++    value = output_uop.index(v_range).store(input_uop.index(v_range).load() * kernel_var.cast(dtypes.float32)).end(v_range)
++    program = to_program(value.sink(arg=KernelInfo(name="amd_commutative_params")), Device["CPU"].renderer)
++
++    call_bufs = [UOp.placeholder((4,), dtypes.float32, i, device="AMD") for i in range(3)]
++    call_var = UOp.variable("amd_v", 0, 42, dtypes.int32)
++    call = program.call(*call_bufs, call_var.bind(7))
++
++    from tinygrad.runtime.ops_amd import AMDComputeQueue
++    fake_queue = SimpleNamespace(devs=("AMD",))
++    fake_data = SimpleNamespace(kernargs_segment_size=128, enable_dispatch_ptr=0)
++    with patch("tinygrad.runtime.ops_amd.pack_args", side_effect=lambda xs,size:list(xs)):
++      packed = AMDComputeQueue.kernargs(fake_queue, call, program, fake_data)
++    self.assertEqual(packed, [(0, call_bufs[0].getaddr(("AMD",))), (8, UOp.const(7).ccast(dtypes.int32)),
++                              (16, call_bufs[2].getaddr(("AMD",)))])
++
++  def test_dsp_rpc_wrapper_uses_compact_buffer_ordinals(self):
++    # The DSP RPC arrays contain only buffers, even when the rendered kernel ABI has scalars between them.
++    from tinygrad.runtime.ops_dsp import DSPRenderer
++    renderer = object.__new__(DSPRenderer)
++    b0, b2 = UOp.param(0, dtypes.float32, shape=(4,)), UOp.param(2, dtypes.float32, shape=(4,))
++    v1 = UOp.variable("dsp_v", 0, 42, dtypes.int32, param=True)
++    v1 = v1.replace(arg=replace(v1.arg, slot=1))
++    entry = renderer._render_entry("dsp_mixed", [("b0", (b0, False)), ("v1", (v1, False)), ("b2", (b2, False))])
++    self.assertIn("off0 = ((int*)pra[1].buf.pv)[0]", entry)
++    self.assertIn("off2 = ((int*)pra[1].buf.pv)[1]", entry)
++    self.assertIn("pra[3].dma.fd", entry)
++    self.assertIn("pra[4].dma.fd", entry)
++    self.assertNotIn("pra[5].dma.fd", entry)
++    self.assertIn("dsp_mixed(buf_0, sz_or_val_1, buf_2)", entry)
++
++  def test_qcom_kernargs_mixed_order(self):
++    # QCOM binary argument offsets are ABI-ordered; sparse call buffers must still index the compact runtime buffer list.
++    output_uop, input_uop = UOp.param(0, dtypes.float32, shape=(4,)), UOp.param(2, dtypes.float32, shape=(4,))
++    kernel_var = UOp.variable("qcom_v", 0, 42, dtypes.int32, param=True)
++    kernel_var = kernel_var.replace(arg=replace(kernel_var.arg, slot=1))
++    v_range = UOp.range(4, 0)
++    value = output_uop.index(v_range).store(input_uop.index(v_range).load() * kernel_var.cast(dtypes.float32)).end(v_range)
++    program = to_program(value.sink(arg=KernelInfo(name="qcom_commutative_params")), Device["CPU"].renderer)
++
++    call_bufs = [UOp.placeholder((4,), dtypes.float32, i, device="QCOM") for i in range(3)]
++    call_var = UOp.variable("qcom_v", 0, 42, dtypes.int32)
++    call = program.call(*call_bufs, call_var.bind(7))
++
++    from tinygrad.runtime.ops_qcom import QCOMComputeQueue
++    fake_data = SimpleNamespace(signature=program.to_elf().signature, ibo_cnt=0, tex_cnt=0, tex_to_image=[], NIR=False, consts_info=[],
++      samplers=[], samp_off=0, buf_offs=[0, 8, 16], tex_off=0, ibo_off=0, kernargs_alloc_size=64)
++    captured = []
++    with patch("tinygrad.runtime.ops_qcom.pack_args", side_effect=lambda xs,size: captured.extend(xs) or []):
++      QCOMComputeQueue.kernargs(SimpleNamespace(devs=("QCOM",)), call, program, fake_data)
++    self.assertEqual(captured, [(0, call_bufs[0].getaddr(("QCOM",))), (8, UOp.const(7).ccast(dtypes.int32)),
++                                (16, call_bufs[2].getaddr(("QCOM",)))])
++
++  def test_cuda_struct_mixed_order(self):
++    # This is a pure host-side packing test; it doesn't require a CUDA device.
++    from tinygrad.runtime.ops_cuda import encode_args
++    sig = (
++      ("a", 0, dtypes.int32, (), AddrSpace.ALU),
++      (None, 0, dtypes.float32, (4,), AddrSpace.GLOBAL),
++      ("b", 1, dtypes.int16, (), AddrSpace.ALU),
++      (None, 1, dtypes.float32, (4,), AddrSpace.GLOBAL),
++    )
++    c_args, _ = encode_args([0x1111222233334444, 0x5555666677778888], [7, 9], sig)
++    self.assertEqual(c_args.a0, 7)
++    self.assertEqual(c_args.a1, 0x1111222233334444)
++    self.assertEqual(c_args.a2, 9)
++    self.assertEqual(c_args.a3, 0x5555666677778888)
++    self.assertGreaterEqual(ctypes.sizeof(c_args), 32)
++
++  @unittest.skipUnless(Device.DEFAULT == "CL", "images need CL")
++  def test_image_and_flat_view_of_one_buffer(self):
++    x = Tensor.rand(16, 10, 27).realize()
++    weight = Tensor.rand(10).realize()
++    target = Tensor.uniform(16, 27, low=0, high=10, dtype=dtypes.int32).realize()
++    x_np, target_np, weight_np = x.numpy(), target.numpy(), weight.numpy()
++    picked = np.take_along_axis(x_np, target_np[:,None,:], axis=1).squeeze(1)
++    expected = -(picked * weight_np[target_np]).sum() / weight_np[target_np].sum()
++
++    with Context(IMAGE=1): loss = x.nll_loss(target, weight=weight).numpy()
++    np.testing.assert_allclose(loss, expected, atol=1e-5, rtol=1e-5)
++
++if __name__ == "__main__":
++  unittest.main()
+diff --git a/tinygrad/device.py b/tinygrad/device.py
+index e14786936..1257a306a 100644
+--- a/tinygrad/device.py
++++ b/tinygrad/device.py
+@@ -1,13 +1,13 @@
+ from __future__ import annotations
+ from dataclasses import dataclass, replace, field
+ from collections import defaultdict
+-from typing import Any, Callable, Generic, TypeVar, Iterator, Generator, Self, TYPE_CHECKING
++from typing import Any, Callable, Generic, TypeVar, Iterator, Generator, Sequence, Self, TYPE_CHECKING
+ import importlib, inspect, functools, pathlib, os, contextlib, re, atexit, pickle, decimal, subprocess, struct, mmap, time, statistics
+ from tinygrad.helpers import mv_address, LRU, getenv, diskcache_get, diskcache_put, DEBUG, GlobalCounters, PROFILE, temp, colored
+ from tinygrad.helpers import Context, CCACHE, ALLOW_DEVICE_USAGE, MAX_BUFFER_SIZE, cpu_events, ProfileEvent, ProfilePointEvent, suppress_finalizing
+ from tinygrad.helpers import select_by_name, select_first_inited, DEV, TracingKey, size_to_str, pluralize, Target, unwrap, round_up, is_numpy_ndarray
+ from tinygrad.helpers import cpu_profile, perf_counter_us, ContextVar
+-from tinygrad.dtype import dtypes, DType, _to_np_dtype
++from tinygrad.dtype import dtypes, DType, AddrSpace, _to_np_dtype
+ from tinygrad.runtime.support.memory import BumpAllocator, MMIOInterface
+ if TYPE_CHECKING:
+   from tinygrad.renderer import Renderer
+@@ -386,15 +386,21 @@ class TinyELF:
+   lib: bytes
+   name: str
+   target: Target
+-  # tuple of (name, slot, dtype, shape)
+-  signature: tuple[tuple[str|None, int, DType, tuple], ...]
++  # tuple of (name, source slot, dtype, shape, address space), in rendered ABI order
++  signature: tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...]
+   profile_key: bytes|None = None
+ 
+   @staticmethod
+-  def iter_sig(signature:tuple[tuple[str|None, int, DType, tuple], ...], offset:int=0) -> Generator[tuple[int, DType], None, None]:
+-    for _,_,dt,_ in signature:
+-      yield (offset:=round_up(offset, dt.itemsize)), dt
+-      offset += dt.itemsize
++  def iter_sig(signature:tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...], offset:int=0) \
++    -> Generator[tuple[int, DType, AddrSpace], None, None]:
++    for _,_,dt,_,addrspace in signature:
++      align, size = (dt.itemsize, dt.itemsize) if addrspace is AddrSpace.ALU else (8, 8)
++      yield (offset:=round_up(offset, align)), dt, addrspace
++      offset += size
++
++  @staticmethod
++  def merge_args(signature:tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...], buffers:Sequence, values:Sequence) -> list:
++    return [values[slot] if addrspace is AddrSpace.ALU else buffers[slot] for _,slot,_,_,addrspace in signature]
+ 
+ class Program(Generic[DeviceType]):
+   def __init__(self, dev:DeviceType, ob
