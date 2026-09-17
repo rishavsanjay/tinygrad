@@ -1,0 +1,28 @@
+name: rebase-pr17825
+on:
+  push:
+    branches: [audit-pr17825]
+permissions:
+  contents: write
+jobs:
+  rebase:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Rebase PR 17825 onto current upstream master
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/tinygrad/tinygrad.git || true
+          git fetch upstream master
+          git fetch origin pr-17825
+          git checkout -B pr-17825-rebased origin/pr-17825
+          git rebase upstream/master
+      - name: Focused tests
+        run: |
+          python -m unittest -v test.backend.test_commutative_params
+      - name: Push rebased branch
+        run: |
+          git push origin HEAD:refs/heads/pr-17825-rebased --force
