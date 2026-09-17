@@ -18,11 +18,14 @@ jobs:
           git remote add upstream https://github.com/tinygrad/tinygrad.git || true
           git fetch upstream master
           git fetch origin pr-17825
-          git checkout -B pr-17825-rebased origin/pr-17825
-          git rebase upstream/master
+          git checkout -B pr-17825-rebased-auto origin/pr-17825
+          git rebase -X ours upstream/master
       - name: Focused tests
         run: |
           python -m unittest -v test.backend.test_commutative_params
       - name: Push rebased branch
+        if: always()
         run: |
-          git push origin HEAD:refs/heads/pr-17825-rebased --force
+          git status --short
+          git log --oneline -12
+          git push origin HEAD:refs/heads/pr-17825-rebased-auto --force
