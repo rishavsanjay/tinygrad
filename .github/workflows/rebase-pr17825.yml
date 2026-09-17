@@ -1,0 +1,30 @@
+name: rebase-pr17825
+on:
+  push:
+    branches: [rebase-pr17825-helper]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: pr-17825
+          fetch-depth: 0
+      - name: Rebase onto upstream master
+        env:
+          OLD_TIP: 6927b3f5d97b7c57c60e08c2759586c7c172d002
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/tinygrad/tinygrad.git
+          git fetch upstream master
+          echo "upstream=$(git rev-parse upstream/master)"
+          echo "before=$(git rev-parse HEAD)"
+          git rebase upstream/master
+          echo "after=$(git rev-parse HEAD)"
+          git push origin HEAD:refs/heads/pr-17825 --force-with-lease=refs/heads/pr-17825:$OLD_TIP
