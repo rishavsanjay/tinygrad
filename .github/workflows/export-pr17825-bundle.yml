@@ -1,0 +1,24 @@
+name: export-pr17825-bundle
+on:
+  push:
+    branches: [rebase-pr17825-helper]
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch upstream and bundle
+        run: |
+          git remote add upstream https://github.com/tinygrad/tinygrad.git || true
+          git fetch upstream master
+          git branch -f upstream-master upstream/master
+          git bundle create /tmp/tinygrad-pr17825.bundle pr-17825 pr-17825-pre-rebase upstream-master
+          git bundle verify /tmp/tinygrad-pr17825.bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tinygrad-pr17825-bundle
+          path: /tmp/tinygrad-pr17825.bundle
