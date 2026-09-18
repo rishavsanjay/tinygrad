@@ -32,8 +32,10 @@ class DSPRenderer(ClangRenderer):
     msrc += [f'{self._render_dtype(b[1][0].dtype) if b[1][0].addrspace == AddrSpace.ALU else "int"} sz_or_val_{i} = '
              f'*({self._render_dtype(b[1][0].dtype) if b[1][0].addrspace == AddrSpace.ALU else "int"}*)((char*)pra[0].buf.pv+{i*8});'
              for i,b in enumerate(bufs)]
-    msrc += [f'int off{i} = ((int*)pra[1].buf.pv)[{i}];' for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
-    msrc += [f'void *buf_{i} = HAP_mmap(0,sz_or_val_{i},3,0,pra[{i+3}].dma.fd,0)+off{i};'
+    global_slots = {slot:j for j,slot in enumerate(sorted({b[1][0].arg.slot for b in bufs if b[1][0].addrspace == AddrSpace.GLOBAL}))}
+    msrc += [f'int off{i} = ((int*)pra[1].buf.pv)[{global_slots[b[1][0].arg.slot]}];'
+             for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
+    msrc += [f'void *buf_{i} = HAP_mmap(0,sz_or_val_{i},3,0,pra[{global_slots[b[1][0].arg.slot]+3}].dma.fd,0)+off{i};'
              for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
     msrc += ["unsigned long long start = HAP_perf_get_time_us();"]
     fbufs = [(f'buf_{i}' if b[1][0].addrspace == AddrSpace.GLOBAL else f'sz_or_val_{i}') for i,b in enumerate(bufs)]
@@ -62,10 +64,11 @@ class DSPProgram(Program['DSPDevice']):
   def __call__(self, *bufs, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), vals:tuple[int, ...]=(), wait=False, **kw):
     if len(bufs) >= 16: raise RuntimeError(f"Too many buffers to execute: {len(bufs)}")
 
-    pra, fds, attrs, _ = rpc_prep_args(ins=[var_vals_mv:=memoryview(bytearray((len(bufs)+len(vals))*8)), off_mv:=memoryview(bytearray(len(bufs)*4))],
+    pra, fds, attrs, _ = rpc_prep_args(ins=[var_vals_mv:=memoryview(bytearray(len(self.signature)*8)), off_mv:=memoryview(bytearray(len(bufs)*4))],
                                        outs=[timer:=memoryview(bytearray(8)).cast('Q')], in_fds=[b.share_info.fd for b in bufs])
-    for i,b in enumerate(bufs): struct.pack_into('i', var_vals_mv, i*8, b.size)
-    for i,(v,(_,_,dt,_)) in enumerate(zip(vals, self.signature[len(bufs):]), start=len(bufs)): struct.pack_into(unwrap(dt.fmt), var_vals_mv, i*8, v)
+    for i,(v,arg) in enumerate(zip(TinyELF.merge_args(self.signature, bufs, vals), self.signature)):
+      struct.pack_into(unwrap(arg.dtype.fmt) if arg.addrspace is AddrSpace.ALU else 'i', var_vals_mv, i*8,
+                       v if arg.addrspace is AddrSpace.ALU else v.size)
     off_mv.cast('I')[:] = array.array('I', tuple(b.offset for b in bufs))
     self.dev.exec_lib(self.lib, rpc_sc(method=2, ins=2, outs=1, fds=len(bufs)), pra, fds, attrs)
     return timer[0] / 1e6
@@ -257,19 +260,29 @@ class MockDSPRenderer(DSPRenderer):
     # https://gpages.juszkiewicz.com.pl/syscalls-table/syscalls.html
     # control register 21 is HEX_REG_QEMU_INSN_CNT, 0x6a15c000 loads it
     msrc = [mockdsp_boilerplate, 'void _start(void) {']
+    buffer_slots = {slot:j for j,slot in enumerate(dict.fromkeys(b[1][0].arg.slot for b in bufs if b[1][0].addrspace is not AddrSpace.ALU))}
+    buffer_sizes = {slot:max(b[1][0].max_numel()*b[1][0].dtype.itemsize for b in bufs if b[1][0].addrspace is not AddrSpace.ALU and
+                            b[1][0].arg.slot == slot) for slot in buffer_slots}
+    seen_slots:set[int] = set()
     for i,b in enumerate(bufs):
-      if b[1][0].addrspace == AddrSpace.GLOBAL:
-        sz = b[1][0].max_numel()*b[1][0].dtype.itemsize
+      if b[1][0].addrspace is not AddrSpace.ALU and b[1][0].arg.slot not in seen_slots:
+        seen_slots.add(slot:=b[1][0].arg.slot)
+        sz = buffer_sizes[slot]
         # for loop for big reads
-        msrc.append(f"void *buf{i} = mmap2(0, {sz}, 3, 0x21, -1, 0); for(int rd = 0; rd < {sz}; rd += read(0, buf{i}+rd, {sz}-rd));")
-      else:
+        j = buffer_slots[slot]
+        msrc.append(f"void *buf{j} = mmap2(0, {sz}, 3, 0x21, -1, 0); for(int rd = 0; rd < {sz}; rd += read(0, buf{j}+rd, {sz}-rd));")
+      elif b[1][0].addrspace is AddrSpace.ALU:
         msrc.append(f"{self._render_dtype(b[1][0].dtype)} val{i}; read(0, &val{i}, {b[1][0].dtype.itemsize});")
     msrc.append("unsigned int st = inscount();")
-    params = [(f'(void*)buf{i}' if b[1][0].addrspace == AddrSpace.GLOBAL else f'val{i}') for i,b in enumerate(bufs)]
+    params = [(f'(void*)buf{buffer_slots[b[1][0].arg.slot]}' if b[1][0].addrspace is not AddrSpace.ALU else f'val{i}')
+              for i,b in enumerate(bufs)]
     msrc.append(f"{function_name}({', '.join(params)});")
     msrc.append("unsigned int et = inscount() - st; write(1, &et, sizeof(et));")
+    seen_slots.clear()
     for i,b in enumerate(bufs):
-      if b[1][0].addrspace == AddrSpace.GLOBAL: msrc.append(f"write(1, buf{i}, {b[1][0].max_numel()*b[1][0].dtype.itemsize});")
+      if b[1][0].addrspace is AddrSpace.ALU or b[1][0].arg.slot in seen_slots: continue
+      seen_slots.add(b[1][0].arg.slot)
+      msrc.append(f"write(1, buf{buffer_slots[b[1][0].arg.slot]}, {buffer_sizes[b[1][0].arg.slot]});")
     msrc.append('exit(0); }')
     return '\n'.join(msrc)
 
@@ -280,12 +293,21 @@ class MockDSPProgram(Program[DSPDevice]):
       dsp_lib.write(self.lib)
       dsp_lib.flush()
       os.chmod(dsp_lib.name, 0o0777)
+      merged = TinyELF.merge_args(self.signature, bufs, vals)
+      seen_slots:set[int] = set()
+      input_data = []
+      for x,arg in zip(merged, self.signature):
+        if arg.addrspace is AddrSpace.ALU: input_data.append(struct.pack(unwrap(arg.dtype.fmt), x))
+        elif arg.slot not in seen_slots:
+          seen_slots.add(arg.slot)
+          input_data.append(bytes(to_mv(x.va_addr, x.size)))
       proc = subprocess.run(["qemu-hexagon-static", *(['-strace'] if DEBUG >= 5 else []), dsp_lib.name],
-        input=b''.join([bytes(to_mv(x.va_addr, x.size)) for x in bufs] +
-                       [struct.pack(unwrap(dt.fmt), x) for x,(_,_,dt,_) in zip(vals, self.signature[len(bufs):])]),
-        stdout=subprocess.PIPE, check=True)
+        input=b''.join(input_data), stdout=subprocess.PIPE, check=True)
     offset = 4
-    for x in bufs:
+    seen_slots.clear()
+    for x,arg in zip(merged, self.signature):
+      if arg.addrspace is AddrSpace.ALU or arg.slot in seen_slots: continue
+      seen_slots.add(arg.slot)
       to_mv(x.va_addr, x.size)[:] = proc.stdout[offset:offset+x.size]
       offset += x.size
     assert offset == len(proc.stdout)

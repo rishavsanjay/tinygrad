@@ -1,7 +1,7 @@
 from typing import Tuple, Dict, List, Optional
 from tinygrad.dtype import DType, dtypes, AddrSpace
 from tinygrad.tensor import Tensor
-from tinygrad.device import Device, Buffer
+from tinygrad.device import Device, Buffer, TinyELF
 from tinygrad.engine.jit import TinyJit
 from tinygrad.nn.state import get_state_dict
 from tinygrad.helpers import Context, prod
@@ -39,7 +39,8 @@ def compile_net(linear:UOp, output_bufs:List[Buffer]) -> Tuple[Dict[str,str], Li
     prg = to_program(call.src[0], Device[arg_uops[0].device].renderer)
     info = prg.arg
     functions[prg.src[0].arg.function_name] = prg.src[2].arg
-    cargs = [name_of(bu, i == 0) for i, bu in enumerate(arg_uops)] + list(info.vars)
+    program_bufs = [name_of(arg_uops[slot], slot in info.outs) for slot in info.globals]
+    cargs = TinyELF.merge_args(prg.to_elf().signature, program_bufs, list(info.vars))
     statements.append((prg.src[0].arg.function_name, cargs, info.global_size, info.local_size))
 
   return functions, statements, {name:(size, dtype, key) for name, size, dtype, key in bufs.values()}, bufs_to_save

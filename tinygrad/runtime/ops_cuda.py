@@ -1,7 +1,7 @@
 from __future__ import annotations
 import ctypes, functools, mmap, struct, time
 from tinygrad.helpers import DEBUG, DEV, getenv, unwrap
-from tinygrad.device import Buffer, BufferStorage, BufferSpec, Allocator, Compiled, MMIOInterface, HCQ_RUNTIME_DEV
+from tinygrad.device import Buffer, BufferStorage, BufferSpec, Allocator, Compiled, MMIOInterface, HCQ_RUNTIME_DEV, TinyELF
 from tinygrad.dtype import dtypes
 from tinygrad.uop.ops import Ops, UOp, UPat, PatternMatcher
 from tinygrad.engine.realize import get_call_arg_uops, get_call_var_uops
@@ -47,9 +47,10 @@ class CUDAQueue(HWQueue):
     self.h = ccall(cuda.cuLaunchKernel, func, *global_size, *local_size, 0, self.stream, UOp.const(0, dtypes.uint64), self.kernargs.index(extra))
 
   def exec(self, call:UOp, prg:UOp):
-    obj, bufs, vals = prg.to_elf(), get_call_arg_uops(call), get_call_var_uops(call, prg)
-    self.launch(self.extern(("function", obj.lib, obj.name)), prg.arg.global_size, prg.arg.local_size,
-                [bufs[i].getaddr(self.devs) for i in prg.arg.globals] + [v.ccast(var.dtype) for v, var in zip(vals, prg.arg.vars)])
+    obj, call_bufs, call_vals = prg.to_elf(), get_call_arg_uops(call), get_call_var_uops(call, prg)
+    bufs = [call_bufs[i].getaddr(self.devs) for i in prg.arg.globals]
+    vals = [v.ccast(var.dtype) for v,var in zip(call_vals, prg.arg.vars)]
+    self.launch(self.extern(("function", obj.lib, obj.name)), prg.arg.global_size, prg.arg.local_size, TinyELF.merge_args(obj.signature, bufs, vals))
 
   def copy(self, dst:UOp, src:UOp, sz:int):
     self.h = ccall(cuda.cuMemcpyAsync, dst.getaddr(self.devs), src.getaddr(self.devs), UOp.const(sz, dtypes.uint64), self.stream)

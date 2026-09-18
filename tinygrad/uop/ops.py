@@ -6,7 +6,7 @@ from enum import Enum, auto
 from tinygrad.uop import Ops, GroupOp
 from tinygrad.dtype import ConstType, dtypes, DType, DTypeLike, truncate, least_upper_dtype, least_upper_float, Invalid, AddrSpace, strong_dtype
 from tinygrad.dtype import PyConst, InvalidType, bitcast
-from tinygrad.device import Buffer, MultiBuffer, canonicalize_device, TinyELF
+from tinygrad.device import Buffer, MultiBuffer, canonicalize_device, ProgramArg, TinyELF
 from tinygrad.helpers import ContextVar, all_int, prod, getenv, all_same, Context, partition, temp, unwrap, T, argfix, Metadata, flatten, TRACEMETA
 from tinygrad.helpers import PROFILE, dedup, cdiv, cmod, floordiv, floormod, diskcache_put, to_function_name, cpu_profile, TracingKey
 from tinygrad.helpers import VIZ, SPEC, CAPTURE_PROCESS_REPLAY, DISALLOW_BROADCAST, get_shape, fully_flatten, to_tuple
@@ -1268,12 +1268,17 @@ class UOp(RandMixin, metaclass=UOpMetaClass):
 
   def to_elf(self) -> TinyELF:
     assert self.op is Ops.PROGRAM and isinstance(self.arg, ProgramInfo), "to_elf should only be called on a PROGRAM ast"
-    params = tuple(u for u in self.src[1].src if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU)
-    # sig slots are compact: buffers in globals order (runtimes launch buffers in that order), then vars. raw call-arg
-    # positions skip buffers for kernels using a sparse subset of the call's buffers (CL binds bufs[slot])
-    gmap = {s:j for j, s in enumerate(self.arg.globals)}
-    sig = tuple((u.arg.name, gmap[u.arg.slot], u.dtype, u._shape) for u in params) + \
-          tuple((v.arg.name, len(self.arg.globals)+j, v.dtype, v._shape) for j, v in enumerate(self.arg.vars))
+    # ISAs may lower ABI parameters (for example X86 stack arguments) out of the rendered PARAM list. Preserve the pre-isel
+    # parameter set from ProgramInfo, using render order only to disambiguate multiple ABI views of the same logical slot.
+    render_order = {_program_arg(u):i for i,u in enumerate(self.src[1].src) if u.op is Ops.PARAM}
+    # Hand-built PROGRAMs can omit ProgramInfo.args. Keep that API working when the rendered PARAMs still carry
+    # enough information; normal compiled programs always use the complete pre-isel parameter set.
+    parameters = self.arg.args or tuple(_program_arg(u) for u in self.src[1].src if u.op is Ops.PARAM and u.addrspace is not AddrSpace.ALU) + \
+      tuple(_program_arg(v) for v in self.arg.vars)
+    params = sorted(parameters, key=lambda arg: (arg.slot, render_order.get(arg, 0)))
+    # Signature slots index the separate compact runtime bufs/vals arrays, not raw CALL positions.
+    gmap, vmap = {s:j for j,s in enumerate(self.arg.globals)}, {v.arg.slot:j for j,v in enumerate(self.arg.vars)}
+    sig = tuple(replace(arg, slot=vmap[arg.slot] if arg.addrspace is AddrSpace.ALU else gmap[arg.slot]) for arg in params)
     return TinyELF(self.src[3].arg, self.src[0].arg.function_name, self.arg.target, sig, self.key)
 
 @dataclass(frozen=True)
@@ -1286,6 +1291,10 @@ class KernelInfo:
   @property
   def function_name(self): return to_function_name(self.name)
 
+def _program_arg(u:UOp) -> ProgramArg:
+  assert u.op is Ops.PARAM and u.addrspace is not None and u._shape is not None
+  return ProgramArg(u.arg.name, u.arg.slot, u.dtype, cast(tuple[int, ...], u._shape), u.addrspace)
+
 @dataclass(frozen=True)
 class ProgramInfo:
   global_size: tuple[int|float, ...] = (1, 1, 1)
@@ -1295,6 +1304,7 @@ class ProgramInfo:
   outs: tuple[int, ...] = ()
   ins: tuple[int, ...] = ()
   target: Target = Target()
+  args: tuple[ProgramArg, ...] = ()
 
   def launch_dims(self, var_vals:dict[str, int]) -> tuple[tuple[int, ...], tuple[int, ...]]:
     global_size = tuple([sym_infer(sz, var_vals) for sz in self.global_size])  # type: ignore[arg-type]
@@ -1307,23 +1317,23 @@ class ProgramInfo:
 
   @staticmethod
   def from_sink(sink:UOp, target:Target=Target()) -> ProgramInfo:
-    _vars: list[UOp] = []
-    _globals: list[int] = []
+    parameters: list[UOp] = []
     outs: list[int] = []
     ins: list[int] = []
     global_size: list[int] = [1, 1, 1]
     local_size: list[int] = [1, 1, 1]
     for u in sink.toposort():
-      if u.op is Ops.PARAM and u.addrspace == AddrSpace.ALU: _vars.append(u)
-      if u.op is Ops.PARAM and u.addrspace != AddrSpace.ALU: _globals.append(u.arg.slot)
+      if u.op is Ops.PARAM: parameters.append(u)
       if u.op in (Ops.STORE, Ops.LOAD):
         if (idx:=u.src[0]).op in (Ops.INDEX, Ops.SHRINK) or (u.src[0].op is Ops.CAST and (idx:=u.src[0].src[0]).op is Ops.INDEX):
           if (buf:=idx.src[0].buf_uop).op is Ops.PARAM: (outs if u.op is Ops.STORE else ins).append(buf.arg.slot)
       if u.op is Ops.SPECIAL: (local_size if u.arg[0] == 'l' else global_size)[int(u.arg[-1])] = cast(int, u.src[0].ssimplify())
+    parameters = sorted(parameters, key=lambda u: u.arg.slot)
+    _vars = [u for u in parameters if u.addrspace == AddrSpace.ALU]
+    _globals = [u.arg.slot for u in parameters if u.addrspace != AddrSpace.ALU]
     if not outs and not ins: outs = ins = _globals # if neither is inferred, default to all buffers
-    return ProgramInfo(tuple(global_size), tuple(local_size),
-                       tuple(sorted(dedup(_vars), key=lambda v: v.arg.slot)), tuple(sorted(dedup(_globals))), tuple(sorted(dedup(outs))),
-                       tuple(sorted(dedup(ins))), target)
+    return ProgramInfo(tuple(global_size), tuple(local_size), tuple(sorted(dedup(_vars), key=lambda v: v.arg.slot)), tuple(sorted(dedup(_globals))),
+                       tuple(sorted(dedup(outs))), tuple(sorted(dedup(ins))), target, tuple(_program_arg(u) for u in parameters))
 
 # the body of a CALL is always one of these: programs (SINK/PROGRAM/LINEAR), copies, and function references
 OPAQUE_CALL_BODIES = {Ops.SINK, Ops.PROGRAM, Ops.LINEAR, Ops.COPY, Ops.CUSTOM_FUNCTION}
