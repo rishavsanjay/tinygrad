@@ -9,7 +9,7 @@ from tinygrad.runtime.support.hcq import MMIOInterface, FileIOInterface, BumpAll
 from tinygrad.uop.ops import Ops, UOp, UPat, PatternMatcher, KernelInfo
 from tinygrad.engine.realize import get_call_arg_uops, get_call_var_uops, lower_and_compile, run_linear
 from tinygrad.device import BufferStorage, Buffer, BufferSpec, Allocator, Compiled, Device, TinyELF
-from tinygrad.dtype import dtypes, DType
+from tinygrad.dtype import dtypes, DType, AddrSpace
 from tinygrad.helpers import getenv, mv_address, round_up, data64, data64_le, prod, OSX, PROFILE, ContextVar, VIZ
 from tinygrad.helpers import ProfileEvent, unwrap
 from tinygrad.renderer.ptx import PTXRenderer
@@ -173,7 +173,9 @@ class NVComputeQueue(NVQueue):
       qmd.set_constant_buf_addr(j, qmd_addr + UOp.const(self.qmd_sz, dtypes.uint64) if j == 0 else lib.getaddr(self.devs) + off)
     bufs, vals = [get_call_arg_uops(call)[j] for j in prg.arg.globals], get_call_var_uops(call, prg)
     qmd.mv[self.qmd_sz:(at:=self.qmd_sz + len(data.cbuf_0) * 4)] = array.array('I', data.cbuf_0).tobytes() # constant buffer 0: the driver params
-    qmd.patches |= dict(layout_args([b.getaddr(self.devs) for b in bufs] + [v.ccast(dt) for v, dt in zip(vals, data.vars)], at))
+    kargs = [vals[slot].ccast(dtypes.uint64 if data.mock else dt) if addrspace is AddrSpace.ALU else bufs[slot].getaddr(self.devs)
+             for _,slot,dt,_,addrspace in data.signature]
+    qmd.patches |= dict(layout_args(kargs, at))
 
     if self.prev_qmd is None:
       if self.dev.pma_enabled: self.nvm(1, nv_gpu.NVC6C0_PM_TRIGGER, 0)
@@ -242,10 +244,9 @@ class NVProgramData:
       min_cbuf0_entries = 224 if dev.iface.compute_class >= nv_gpu.BLACKWELL_COMPUTE_A else 12
       self.cbuf_0 = [0] * max(cbuf0_size // 4, min_cbuf0_entries)
 
-    # the arguments follow the driver params in constant buffer 0: the buffers as 64 bit addresses, then the vars packed by their width
-    nbufs = sum(name is None for name, *_ in signature)
-    self.vars = [dtypes.uint64 if mock else dt for _,_,dt,_ in signature[nbufs:]] # mockgpu wants every var 64 bit
-    if mock: self.cbuf_0[80:82] = [nbufs, len(self.vars)] # mockgpu reads the arg counts out of cbuf0
+    # Arguments follow driver params in rendered ABI order. MockGPU treats each entry as a 64-bit generic argument.
+    self.signature, self.mock = signature, mock
+    if mock: self.cbuf_0[80:82] = [len(signature), 0]
 
     # NOTE: Ensure at least 4KB of space after the program to mitigate prefetch memory faults.
     self.image = image.ljust(round_up(len(image), 0x1000) + 0x1000, b'\x00')

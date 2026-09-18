@@ -1,13 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass, replace, field
 from collections import defaultdict
-from typing import Any, Callable, Generic, TypeVar, Iterator, Generator, Self, TYPE_CHECKING
+from typing import Any, Callable, Generic, TypeVar, Iterator, Generator, Sequence, Self, TYPE_CHECKING
 import importlib, inspect, functools, pathlib, os, contextlib, re, atexit, pickle, decimal, subprocess, struct, mmap, time, statistics
 from tinygrad.helpers import mv_address, LRU, getenv, diskcache_get, diskcache_put, DEBUG, GlobalCounters, PROFILE, temp, colored
 from tinygrad.helpers import Context, CCACHE, ALLOW_DEVICE_USAGE, MAX_BUFFER_SIZE, cpu_events, ProfileEvent, ProfilePointEvent, suppress_finalizing
 from tinygrad.helpers import select_by_name, select_first_inited, DEV, TracingKey, size_to_str, pluralize, Target, unwrap, round_up, is_numpy_ndarray
 from tinygrad.helpers import cpu_profile, perf_counter_us, ContextVar
-from tinygrad.dtype import dtypes, DType, _to_np_dtype
+from tinygrad.dtype import dtypes, DType, AddrSpace, _to_np_dtype
 from tinygrad.runtime.support.memory import BumpAllocator, MMIOInterface
 if TYPE_CHECKING:
   from tinygrad.renderer import Renderer
@@ -386,15 +386,21 @@ class TinyELF:
   lib: bytes
   name: str
   target: Target
-  # tuple of (name, slot, dtype, shape)
-  signature: tuple[tuple[str|None, int, DType, tuple], ...]
+  # tuple of (name, source slot, dtype, shape, address space), in rendered ABI order
+  signature: tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...]
   profile_key: bytes|None = None
 
   @staticmethod
-  def iter_sig(signature:tuple[tuple[str|None, int, DType, tuple], ...], offset:int=0) -> Generator[tuple[int, DType], None, None]:
-    for _,_,dt,_ in signature:
-      yield (offset:=round_up(offset, dt.itemsize)), dt
-      offset += dt.itemsize
+  def iter_sig(signature:tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...], offset:int=0) \
+    -> Generator[tuple[int, DType, AddrSpace], None, None]:
+    for _,_,dt,_,addrspace in signature:
+      align, size = (dt.itemsize, dt.itemsize) if addrspace is AddrSpace.ALU else (8, 8)
+      yield (offset:=round_up(offset, align)), dt, addrspace
+      offset += size
+
+  @staticmethod
+  def merge_args(signature:tuple[tuple[str|None, int, DType, tuple, AddrSpace], ...], buffers:Sequence, values:Sequence) -> list:
+    return [values[slot] if addrspace is AddrSpace.ALU else buffers[slot] for _,slot,_,_,addrspace in signature]
 
 class Program(Generic[DeviceType]):
   def __init__(self, dev:DeviceType, obj:TinyELF): pass

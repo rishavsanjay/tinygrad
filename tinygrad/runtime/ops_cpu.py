@@ -3,6 +3,7 @@ import platform, sys, ctypes, mmap, struct
 from typing import cast, Any
 from tinygrad.helpers import OSX, WIN, mv_address, suppress_finalizing, unwrap, data64_le, cpu_profile
 from tinygrad.device import Compiled, TinyELF, Program, HostAllocator
+from tinygrad.dtype import AddrSpace
 from tinygrad.runtime.support.c import DLL
 from tinygrad.renderer.cstyle import ClangRenderer
 from tinygrad.renderer.llvmir import CPULLVMRenderer
@@ -57,17 +58,20 @@ class CPUProgram(Program['CPUDevice']):
 
   def __call__(self, *bufs:int, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1),
                vals:tuple[int|None, ...]=(), wait:bool=False, timeout:int|None=None) -> float|None:
-    args = [*bufs, *cast(tuple[int, ...], vals)]
+    args = TinyELF.merge_args(self.signature, bufs, cast(tuple[int, ...], vals))
     if (remote:=self.dev.remote) is not None:
       data = struct.pack(f'<{len(args)}Q', *(a & 0xffffffffffffffff for a in args))
       ret = (remote._rpc if wait else remote._post)(remote.sock, RemoteCmd.EXEC_PROG, self.fxn, len(args), int(wait), payload=data)
       return ret[0] / 1e9 if ret is not None else None
     with cpu_profile(self.name, self.dev.device, profile_key=self.profile_key) as prof:
       if self.lvp:
-        lvp_args = bytearray(12 + (len(bufs) + len(vals)) * 8)
+        packed = list(TinyELF.iter_sig(self.signature))
+        arg_size = max((off + (dt.itemsize if addrspace is AddrSpace.ALU else 8) for off,dt,addrspace in packed), default=0)
+        lvp_args = bytearray(12 + arg_size)
         addr = mv_address(lvp_args)
-        struct.pack_into(f'<3I{len(bufs)}Q', lvp_args, 0, *data64_le(addr+12), (len(bufs)+len(vals))*2, *bufs)
-        for v,(off,dt) in zip(vals, TinyELF.iter_sig(self.signature[-len(vals):], len(bufs)*8)): struct.pack_into(f'<{dt.fmt}', lvp_args, 12+off, v)
+        struct.pack_into('<3I', lvp_args, 0, *data64_le(addr+12), len(self.signature)*2)
+        for v,(off,dt,addrspace) in zip(args, packed):
+          struct.pack_into(f'<{dt.fmt if addrspace is AddrSpace.ALU else "Q"}', lvp_args, 12+off, v)
         self.fxn(addr)
       else: self.fxn(*[ctypes.c_uint64(x) for x in args])
     return float(unwrap(prof.en) - prof.st) * 1e-6 if wait else None

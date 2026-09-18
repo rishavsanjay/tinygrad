@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from tinygrad.runtime.support.hcq2 import HWQueue, encode_submit, bufferize_linear, to_name, patch, unwrap_view, rt_addr, layout_args
 from tinygrad.runtime.support.hcq2 import pack_args
 from tinygrad.uop.ops import sint, UOp, ProgramInfo
-from tinygrad.device import BufferStorage, BufferSpec, Buffer, Device, Allocator, Compiled, ProfileProgramEvent
+from tinygrad.device import BufferStorage, BufferSpec, Buffer, Device, Allocator, Compiled, ProfileProgramEvent, TinyELF
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import getenv, round_up, data64_le, DEBUG, PROFILE, ProfileEvent, lo32, hi32, prod, colored
 from tinygrad.helpers import ceildiv, unwrap, pluralize, HCQ2, ContextVar, VIZ
@@ -357,8 +357,9 @@ class AMDComputeQueue(HWQueue):
   ### exec
 
   def kernargs(self, call:UOp, prg:UOp, data:AMDProgramData) -> list[UOp]:
-    args = [get_call_arg_uops(call)[gi].getaddr(self.devs) for gi in prg.arg.globals] + \
-            [b.ccast(v.dtype) for v, b in zip(prg.arg.vars, get_call_var_uops(call, prg))] # a bound value is a bare const, the var has the width
+    bufs = [get_call_arg_uops(call)[gi].getaddr(self.devs) for gi in prg.arg.globals]
+    vals = [b.ccast(v.dtype) for v,b in zip(prg.arg.vars, get_call_var_uops(call, prg))] # a bound value is a bare const, the var has the width
+    args = TinyELF.merge_args(prg.to_elf().signature, bufs, vals)
     return pack_args(layout_args(args), data.kernargs_segment_size) + (dispatch_packet(data, prg.arg) if data.enable_dispatch_ptr else [])
 
   def exec(self, call:UOp, prg:UOp):

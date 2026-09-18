@@ -32,8 +32,10 @@ class DSPRenderer(ClangRenderer):
     msrc += [f'{self._render_dtype(b[1][0].dtype) if b[1][0].addrspace == AddrSpace.ALU else "int"} sz_or_val_{i} = '
              f'*({self._render_dtype(b[1][0].dtype) if b[1][0].addrspace == AddrSpace.ALU else "int"}*)((char*)pra[0].buf.pv+{i*8});'
              for i,b in enumerate(bufs)]
-    msrc += [f'int off{i} = ((int*)pra[1].buf.pv)[{i}];' for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
-    msrc += [f'void *buf_{i} = HAP_mmap(0,sz_or_val_{i},3,0,pra[{i+3}].dma.fd,0)+off{i};'
+    global_slots = {slot:j for j,slot in enumerate(sorted({b[1][0].arg.slot for b in bufs if b[1][0].addrspace == AddrSpace.GLOBAL}))}
+    msrc += [f'int off{i} = ((int*)pra[1].buf.pv)[{global_slots[b[1][0].arg.slot]}];'
+             for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
+    msrc += [f'void *buf_{i} = HAP_mmap(0,sz_or_val_{i},3,0,pra[{global_slots[b[1][0].arg.slot]+3}].dma.fd,0)+off{i};'
              for i,b in enumerate(bufs) if b[1][0].addrspace == AddrSpace.GLOBAL]
     msrc += ["unsigned long long start = HAP_perf_get_time_us();"]
     fbufs = [(f'buf_{i}' if b[1][0].addrspace == AddrSpace.GLOBAL else f'sz_or_val_{i}') for i,b in enumerate(bufs)]
@@ -62,10 +64,10 @@ class DSPProgram(Program['DSPDevice']):
   def __call__(self, *bufs, global_size:tuple[int,int,int]=(1,1,1), local_size:tuple[int,int,int]=(1,1,1), vals:tuple[int, ...]=(), wait=False, **kw):
     if len(bufs) >= 16: raise RuntimeError(f"Too many buffers to execute: {len(bufs)}")
 
-    pra, fds, attrs, _ = rpc_prep_args(ins=[var_vals_mv:=memoryview(bytearray((len(bufs)+len(vals))*8)), off_mv:=memoryview(bytearray(len(bufs)*4))],
+    pra, fds, attrs, _ = rpc_prep_args(ins=[var_vals_mv:=memoryview(bytearray(len(self.signature)*8)), off_mv:=memoryview(bytearray(len(bufs)*4))],
                                        outs=[timer:=memoryview(bytearray(8)).cast('Q')], in_fds=[b.share_info.fd for b in bufs])
-    for i,b in enumerate(bufs): struct.pack_into('i', var_vals_mv, i*8, b.size)
-    for i,(v,(_,_,dt,_)) in enumerate(zip(vals, self.signature[len(bufs):]), start=len(bufs)): struct.pack_into(unwrap(dt.fmt), var_vals_mv, i*8, v)
+    for i,(v,(_,_,dt,_,addrspace)) in enumerate(zip(TinyELF.merge_args(self.signature, bufs, vals), self.signature)):
+      struct.pack_into(unwrap(dt.fmt) if addrspace is AddrSpace.ALU else 'i', var_vals_mv, i*8, v if addrspace is AddrSpace.ALU else v.size)
     off_mv.cast('I')[:] = array.array('I', tuple(b.offset for b in bufs))
     self.dev.exec_lib(self.lib, rpc_sc(method=2, ins=2, outs=1, fds=len(bufs)), pra, fds, attrs)
     return timer[0] / 1e6
@@ -280,12 +282,13 @@ class MockDSPProgram(Program[DSPDevice]):
       dsp_lib.write(self.lib)
       dsp_lib.flush()
       os.chmod(dsp_lib.name, 0o0777)
+      merged = TinyELF.merge_args(self.signature, bufs, vals)
       proc = subprocess.run(["qemu-hexagon-static", *(['-strace'] if DEBUG >= 5 else []), dsp_lib.name],
-        input=b''.join([bytes(to_mv(x.va_addr, x.size)) for x in bufs] +
-                       [struct.pack(unwrap(dt.fmt), x) for x,(_,_,dt,_) in zip(vals, self.signature[len(bufs):])]),
-        stdout=subprocess.PIPE, check=True)
+        input=b''.join(struct.pack(unwrap(dt.fmt), x) if addrspace is AddrSpace.ALU else bytes(to_mv(x.va_addr, x.size))
+                       for x,(_,_,dt,_,addrspace) in zip(merged, self.signature)), stdout=subprocess.PIPE, check=True)
     offset = 4
-    for x in bufs:
+    for x,(*_,addrspace) in zip(merged, self.signature):
+      if addrspace is AddrSpace.ALU: continue
       to_mv(x.va_addr, x.size)[:] = proc.stdout[offset:offset+x.size]
       offset += x.size
     assert offset == len(proc.stdout)
