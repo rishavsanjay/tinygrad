@@ -1332,7 +1332,7 @@ class ProgramInfo:
     _vars = [u for u in parameters if u.addrspace == AddrSpace.ALU]
     _globals = [u.arg.slot for u in parameters if u.addrspace != AddrSpace.ALU]
     if not outs and not ins: outs = ins = _globals # if neither is inferred, default to all buffers
-    return ProgramInfo(tuple(global_size), tuple(local_size), tuple(sorted(dedup(_vars), key=lambda v: v.arg.slot)), tuple(sorted(dedup(_globals))),
+    return ProgramInfo(tuple(global_size), tuple(local_size), tuple(_vars), tuple(dedup(_globals)),
                        tuple(sorted(dedup(outs))), tuple(sorted(dedup(ins))), target, tuple(_program_arg(u) for u in parameters))
 
 # the body of a CALL is always one of these: programs (SINK/PROGRAM/LINEAR), copies, and function references

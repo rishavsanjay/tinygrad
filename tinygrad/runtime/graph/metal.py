@@ -27,28 +27,28 @@ class MetalGraph(GraphRunner):
 
     self.var_bind_data = []
     scalar_sig = tuple(arg for r in self.runtimes for arg in unwrap(r).signature if arg.addrspace is AddrSpace.ALU)
-    scalar_layout = list(TinyELF.iter_sig(scalar_sig))
-    if scalar_layout:
-      scalar_size = TinyELF.packed_size(scalar_sig)
-      storage = self.dev.allocator.alloc(scalar_size)
+    if scalar_sig:
+      storage = self.dev.allocator.alloc(TinyELF.packed_size(scalar_sig))
       self.var_buf, self.var_buf_view = storage.buf, unwrap(storage.host).mv
-    scalar_layout_iter = iter(scalar_layout)
+    scalar_layout = TinyELF.iter_sig(scalar_sig)
+    self.buffer_bindings:list[tuple[int, int, int]] = []
 
-    all_pipelines, all_resources = [], [self.var_buf.buf] if scalar_layout else []
+    all_pipelines, all_resources = [], [self.var_buf.buf] if scalar_sig else []
     for j, ((_, ast, bufs, _), runtime, replace) in enumerate(zip(self.calls, self.runtimes, self.uop_replace)):
       assert runtime is not None
       icb_command = self.icb.indirectComputeCommandAtIndex(j).retained()
       icb_command.setComputePipelineState(runtime.pipeline_state)
       all_pipelines.append(runtime.pipeline_state)
+      replacements = dict(replace)
       for abi_pos,arg in enumerate(runtime.signature):
         if arg.addrspace is AddrSpace.ALU:
-          var_buf_offset, layout_arg = next(scalar_layout_iter)
-          assert layout_arg.dtype == arg.dtype
+          var_buf_offset, _ = next(scalar_layout)
           icb_command.setKernelBuffer_offset_atIndex(self.var_buf.buf, var_buf_offset, abi_pos)
           self.var_bind_data.append((arg.name, var_buf_offset, arg.dtype.fmt))
         else:
           call_slot = ast.arg.globals[arg.slot]
-          if not any(pos == call_slot for pos, _ in replace):
+          if call_slot in replacements: self.buffer_bindings.append((j, abi_pos, replacements[call_slot]))
+          else:
             b = bufs[call_slot]
             icb_command.setKernelBuffer_offset_atIndex(b._buf.buf, b._buf.offset, abi_pos)
             all_resources.append(b._buf.buf)
@@ -60,7 +60,6 @@ class MetalGraph(GraphRunner):
     self.all_pipelines = dedup(all_pipelines)
     self.command_buffer: Any = None
     self.range = metal.NSRange(0, len(self.calls))
-    self.updatable = sorted({j for j,r in enumerate(self.uop_replace) if r} | self.var_vals_replace.keys() | self.launch_dims_replace.keys())
 
   def __call__(self, input_uops:tuple[UOp, ...], var_vals:dict[str, int], wait=False):
     if self.command_buffer is not None and self.command_buffer in self.dev.mtl_buffers_in_flight: wait_check(self.command_buffer)
@@ -68,17 +67,10 @@ class MetalGraph(GraphRunner):
     if self.command_buffer is not None and PROFILE: self.collect_timestamps()
 
     updated_bufs = []
-    for j in self.updatable:
-      computeCommand = self.icb.indirectComputeCommandAtIndex(j)
-      runtime, ast = unwrap(self.runtimes[j]), self.calls[j][1]
-      for pos, iidx in self.uop_replace[j]:
-        if pos not in ast.arg.globals: continue
-        buf = cast(Buffer, input_uops[iidx].buffer)
-        src_slot = ast.arg.globals.index(pos)
-        for abi_pos,arg in enumerate(runtime.signature):
-          if arg.addrspace is not AddrSpace.ALU and arg.slot == src_slot:
-            computeCommand.setKernelBuffer_offset_atIndex(buf._buf.buf, buf._buf.offset, abi_pos)
-        updated_bufs.append(buf._buf.buf)
+    for j,abi_pos,iidx in self.buffer_bindings:
+      buf = cast(Buffer, input_uops[iidx].buffer)
+      self.icb.indirectComputeCommandAtIndex(j).setKernelBuffer_offset_atIndex(buf._buf.buf, buf._buf.offset, abi_pos)
+      updated_bufs.append(buf._buf.buf)
 
     all_resources = dedup(self.all_resources + updated_bufs)
     for j, global_dims, local_dims in self.updated_launch_dims(var_vals):

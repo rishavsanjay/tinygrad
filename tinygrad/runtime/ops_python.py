@@ -46,6 +46,9 @@ def wmma(tensor_cores:list[tc.TensorCore], arg, inp, warp_size:int):
 class PythonProgram(Program['PythonDevice']):
   def __init__(self, dev:'PythonDevice', obj:TinyELF):
     self.uops: list[UOp] = pickle.loads(obj.lib)
+    params = [u for u in self.uops if u.op is Ops.PARAM]
+    assert len(params) == len(obj.signature)
+    self.param_slots = {u:arg.slot for u,arg in zip(params, obj.signature)}
     self.tensor_cores = PythonRenderer(obj.target).tensor_cores
     self.uop_to_index: dict[UOp, int] = {u:i for i,u in enumerate(self.uops)}
     self.loop_ends: dict[UOp, int] = {u.src[1]:i for i, u in enumerate(self.uops) if u.op == Ops.END}
@@ -55,8 +58,6 @@ class PythonProgram(Program['PythonDevice']):
     warp_size = len(warp)
     for idxs in itertools.product(*[range(x) for x in global_size[::-1]]):
       values: dict[UOp, Any] = {}
-      pbufs: list[int] = list(bufs)
-      pvals: list[int] = list(vals)
       exec_masks = [[True] * warp_size]
       i = 0
       while i < len(self.uops):
@@ -92,7 +93,7 @@ class PythonProgram(Program['PythonDevice']):
           i += 1
           continue
         if u.op is Ops.AFTER or (u.op is Ops.BITCAST and u.addrspace in (AddrSpace.GLOBAL, AddrSpace.LOCAL)): values[u] = src_values[0]
-        elif u.op is Ops.PARAM and u.addrspace is AddrSpace.ALU: values[u] = [pvals.pop(0)] * warp_size
+        elif u.op is Ops.PARAM and u.addrspace is AddrSpace.ALU: values[u] = [vals[self.param_slots[u]]] * warp_size
         elif u.op in {Ops.PARAM, Ops.BUFFER}:
           storage_fmt = storage_fmt_for_dtype(u.dtype)
           if storage_fmt is None: raise RuntimeError(f"dtype={u.dtype} is not supported")
@@ -102,7 +103,7 @@ class PythonProgram(Program['PythonDevice']):
             values[u] = [memoryview(bytearray(u.max_numel()*u.dtype.itemsize)).cast(storage_fmt) for _ in range(warp_size)]
           else:
             size = u.max_numel() * u.dtype.itemsize
-            buf = memoryview(bytearray(size)) if u.op is not Ops.PARAM else to_mv(pbufs.pop(0), size)
+            buf = memoryview(bytearray(size)) if u.op is not Ops.PARAM else to_mv(bufs[self.param_slots[u]], size)
             values[u] = [buf.cast(storage_fmt)] * warp_size
         elif u.op is Ops.SPECIAL:
           if u.arg[0] == 'g': values[u] = [idxs[2-int(u.arg[-1])]] * warp_size

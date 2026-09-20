@@ -389,6 +389,9 @@ class ProgramArg:
   shape: tuple[int, ...]
   addrspace: AddrSpace
 
+  @property
+  def abi_dtype(self) -> DType: return self.dtype if self.addrspace is AddrSpace.ALU else dtypes.uint64
+
 @dataclass
 class TinyELF:
   lib: bytes
@@ -401,14 +404,12 @@ class TinyELF:
   @staticmethod
   def iter_sig(signature:tuple[ProgramArg, ...], offset:int=0) -> Generator[tuple[int, ProgramArg], None, None]:
     for arg in signature:
-      align, size = (arg.dtype.itemsize, arg.dtype.itemsize) if arg.addrspace is AddrSpace.ALU else (8, 8)
-      yield (offset:=round_up(offset, align)), arg
-      offset += size
+      yield (offset:=round_up(offset, arg.abi_dtype.itemsize)), arg
+      offset += arg.abi_dtype.itemsize
 
   @staticmethod
   def packed_size(signature:tuple[ProgramArg, ...], offset:int=0) -> int:
-    return max((off + (arg.dtype.itemsize if arg.addrspace is AddrSpace.ALU else 8)
-                for off,arg in TinyELF.iter_sig(signature, offset)), default=offset)
+    return max((off + arg.abi_dtype.itemsize for off,arg in TinyELF.iter_sig(signature, offset)), default=offset)
 
   @staticmethod
   def merge_args(signature:tuple[ProgramArg, ...], buffers:Sequence, values:Sequence) -> list:

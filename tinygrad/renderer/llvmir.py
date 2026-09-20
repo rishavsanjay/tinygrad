@@ -1,4 +1,5 @@
 import math, struct, sys
+from collections import Counter
 from tinygrad.renderer import tc
 from tinygrad.renderer import Renderer
 from tinygrad.renderer.cstyle import HIPRenderer, create_non_native_float_pats, pm_manual_bf16_cast, fp8_index, amd_fp8s
@@ -150,9 +151,11 @@ class LLVMRenderer(Renderer):
 
   extra_matcher = create_non_native_float_pats((dtypes.bfloat16,)) + pm_manual_bf16_cast
   def _render_fn(self, name:str, args:list[tuple[str,UOp]], kernel:list[str], prefix:list[str]|None=None) -> str:
-    # NOTE: HostAllocator promises 0x20 alignment
-    sargs = ", ".join([f"{ldt(u.dtype, ptr=u.addrspace == AddrSpace.GLOBAL)}{' noalias align 32' if u.addrspace == AddrSpace.GLOBAL else ''} " + \
-      name for name,u in args])
+    # NOTE: HostAllocator promises 0x20 alignment. Multiple ABI views of a slot may alias.
+    slots = Counter(u.arg.slot for _,u in args if u.addrspace is AddrSpace.GLOBAL)
+    sargs = ", ".join(f"{ldt(u.dtype, ptr=u.addrspace == AddrSpace.GLOBAL)}" +
+                     ((" noalias" if slots[u.arg.slot] == 1 else "") + " align 32" if u.addrspace == AddrSpace.GLOBAL else "") +
+                     f" {name}" for name,u in args)
     return "\n".join((prefix or []) + [f"define{' ' + self.abi if self.abi else ''} void @{name}({sargs}) #0", "{"] + kernel + ["  ret void\n}"])
   def _render_kernel(self, uops: list[UOp], prefix:list[str]|None=None) -> tuple[tuple[str, ...], str]:
     r: dict[UOp, str] = {}
@@ -171,7 +174,7 @@ class LLVMRenderer(Renderer):
         if u.arg is not None: name = u.arg.function_name
         continue
       if u.op is Ops.PARAM:
-        r[u] = f"%data{u.arg.slot}"
+        r[u] = f"%data{len(args)}"
         args.append((r[u], u))
       elif u.op is Ops.BUFFER:
         r[u] = f"%{'local' if u.addrspace == AddrSpace.LOCAL else 'reg'}_{str(u.arg.slot)}"

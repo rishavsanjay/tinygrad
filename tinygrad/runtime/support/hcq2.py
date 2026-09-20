@@ -4,7 +4,7 @@ import functools, itertools, weakref, ctypes, importlib
 from dataclasses import replace, dataclass, field
 from tinygrad.helpers import dedup, pluralize, unwrap, to_tuple, ContextVar, Context, panic, partition, getenv, round_up
 from tinygrad.helpers import DEBUG, VIZ, HCQ2, DEV, ALL2ALL
-from tinygrad.device import Device, Buffer, BufferSpec, DepsTracker, ProgramArg, TinyELF, HCQ_RUNTIME_DEV
+from tinygrad.device import Device, Buffer, BufferSpec, DepsTracker, HCQ_RUNTIME_DEV
 from tinygrad.uop.ops import Ops, UOp, UPat, PatternMatcher, KernelInfo, GroupOp, graph_rewrite, rewrite_group, exec_alu
 from tinygrad.dtype import dtypes, DTYPES_DICT, AddrSpace
 from tinygrad.renderer import Estimates
@@ -72,8 +72,11 @@ def make_submit(*cmds, devs:str|tuple[str, ...], queue:str) -> UOp:
 
 def layout_args(args:Sequence[UOp|int], offset:int=0) -> list[tuple[int, UOp]]:
   words = [a if isinstance(a, UOp) else UOp.const(a, dtypes.uint32) for a in args]
-  signature = tuple(ProgramArg(None, i, w.dtype, (), AddrSpace.ALU) for i,w in enumerate(words))
-  return [(offset + o, w) for (o, _), w in zip(TinyELF.iter_sig(signature), words)]
+  ret, pos = [], 0
+  for w in words:
+    ret.append((offset + (pos:=round_up(pos, w.dtype.itemsize)), w))
+    pos += w.dtype.itemsize
+  return ret
 
 def pack_args(args:list[tuple[int, UOp]], size:int) -> list[UOp]:
   words, end = [], 0

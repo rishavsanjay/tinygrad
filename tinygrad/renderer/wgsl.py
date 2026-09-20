@@ -99,6 +99,17 @@ class WGSLRenderer(CStyleLanguage):
   def render_load(self, x:str, u:UOp) -> str: return f"atomicLoad(&{x})" if is_packed(u) else x
   def buf_map(self, u:UOp) -> str: return "atomic<u32>" if is_packed(u) else self.type_map[u.dtype]
   def render_kernel(self, function_name:str, kernel:list[str], bufs:list[tuple[str,tuple[UOp,bool]]], uops:list[UOp], prefix=None) -> str:
+    # WebGPU forbids overlapping writable storage bindings. Reuse one binding for multiple ABI views of the same logical buffer.
+    aliases:dict[str, str] = {}
+    seen_slots:dict[int, str] = {}
+    unique_bufs:list[tuple[str, tuple[UOp, bool]]] = []
+    for name,(u,mutable) in bufs:
+      if u.addrspace is AddrSpace.GLOBAL and u.arg.slot in seen_slots: aliases[name] = seen_slots[u.arg.slot]
+      else:
+        if u.addrspace is AddrSpace.GLOBAL: seen_slots[u.arg.slot] = name
+        unique_bufs.append((name, (u, mutable)))
+    for alias,name in aliases.items(): kernel[:] = [line.replace(alias, name) for line in kernel]
+    bufs = unique_bufs
     local_size = [u.src[0].ssimplify() for u in sorted([u for u in uops if u.op is Ops.SPECIAL and u.arg[0] == 'l'], key=lambda u: u.arg)]
     if not local_size: local_size = [1]
     bind_it = iter(range(len(bufs)))

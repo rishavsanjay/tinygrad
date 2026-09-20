@@ -4,7 +4,6 @@ import contextlib, decimal, statistics, time, ctypes, array, collections, iterto
 from tinygrad.helpers import PROFILE, getenv, from_mv, cpu_profile, ProfileRangeEvent, unwrap
 from tinygrad.helpers import suppress_finalizing, TracingKey
 from tinygrad.device import BufferStorage, Buffer, BufferSpec, Compiled, Allocator, ProfileDeviceEvent, ProfileProgramEvent, Program, TinyELF
-from tinygrad.dtype import AddrSpace
 from tinygrad.uop.ops import sym_infer, sint, UOp
 from tinygrad.runtime.support.memory import BumpAllocator, MMIOInterface
 from tinygrad.renderer import Renderer
@@ -294,7 +293,7 @@ class CLikeArgsState(HCQArgsState[ProgramType]):
 
     for v,(off,arg) in zip(TinyELF.merge_args(prg.signature, [b.va_addr for b in bufs], vals), TinyELF.iter_sig(prg.signature)):
       assert v is not None
-      self.bind_sints_to_buf(v, buf=self.buf, fmt=arg.dtype.fmt if arg.addrspace is AddrSpace.ALU else 'Q', offset=len(prefix or []) * 4 + off)
+      self.bind_sints_to_buf(v, buf=self.buf, fmt=arg.abi_dtype.fmt, offset=len(prefix or []) * 4 + off)
 
 class HCQProgram(Program[HCQDeviceType]):
   def __init__(self, args_state_t:Type[HCQArgsState], dev:HCQDeviceType, obj:TinyELF, kernargs_alloc_size:int, base:int|None=None):

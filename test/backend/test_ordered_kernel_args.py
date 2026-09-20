@@ -8,7 +8,7 @@ from tinygrad.device import Device, Buffer, ProgramArg, TinyELF
 from tinygrad.dtype import AddrSpace
 from tinygrad.uop.ops import UOp, Ops, KernelInfo
 from tinygrad.codegen import to_program
-from tinygrad.engine.realize import get_runtime
+from tinygrad.engine.realize import run_linear
 
 class TestOrderedKernelArgs(unittest.TestCase):
   def _program(self, out_slot:int, in_slot:int, variable_slots:tuple[int, ...]):
@@ -33,10 +33,9 @@ class TestOrderedKernelArgs(unittest.TestCase):
     input_data = np.arange(4, dtype=np.float32)
     output_buf = Buffer(Device.DEFAULT, 4, dtypes.float32).allocate()
     input_buf = Buffer(Device.DEFAULT, 4, dtypes.float32, initial_value=input_data.tobytes())
-    global_size, local_size = program.arg.launch_dims({})
     slot_to_buffer = {in_slot: input_buf, out_slot: output_buf}
-    get_runtime(Device.DEFAULT, program)(*[slot_to_buffer[s]._buf for s in program.arg.globals],
-      global_size=global_size, local_size=local_size, vals=values, wait=True)
+    bufs = [UOp.from_buffer(slot_to_buffer.get(s, output_buf)) for s in range(max(program.arg.globals)+1)]
+    run_linear(UOp(Ops.LINEAR, src=(program.call(*bufs),)), dict(zip((v.expr for v in program.arg.vars), values)), wait=True)
     np.testing.assert_equal(np.frombuffer(output_buf.as_memoryview(), dtype=np.float32), input_data * values[0] + sum(values[1:]))
 
   def test_interleaved_params(self):
@@ -58,9 +57,25 @@ class TestOrderedKernelArgs(unittest.TestCase):
     input_data = [np.full(4, i, dtype=np.float32) for i in range(1, 8)]
     buffers = [Buffer(Device.DEFAULT, 4, dtypes.float32).allocate()]
     buffers += [Buffer(Device.DEFAULT, 4, dtypes.float32, initial_value=data.tobytes()) for data in input_data]
-    global_size, local_size = program.arg.launch_dims({})
-    get_runtime(Device.DEFAULT, program)(*[b._buf for b in buffers], global_size=global_size, local_size=local_size, wait=True)
+    run_linear(UOp(Ops.LINEAR, src=(program.call(*[UOp.from_buffer(b) for b in buffers]),)), wait=True)
     np.testing.assert_equal(np.frombuffer(buffers[0].as_memoryview(), dtype=np.float32), sum(input_data))
+
+  @unittest.skipUnless(Device.DEFAULT == "METAL", "Metal graph support required")
+  def test_metal_graph_rebinds_mixed_args(self):
+    from tinygrad.runtime.graph.metal import MetalGraph
+    program = self._program(0, 2, (1, 3))
+    inputs = [UOp.placeholder((4,), dtypes.float32, i, device="METAL") for i in range(2)]
+    unused = UOp.new_buffer("METAL", 4, dtypes.float32)
+    linear = UOp(Ops.LINEAR, src=(program.call(inputs[0], unused, inputs[1]),))
+    graph = None
+    for scale, bias in ((3, 1), (7, 2)):
+      data = np.arange(4, dtype=np.float32) + bias
+      out = Buffer("METAL", 4, dtypes.float32).allocate()
+      inp = Buffer("METAL", 4, dtypes.float32, initial_value=data.tobytes())
+      bufs = tuple(UOp.from_buffer(b) for b in (out, inp))
+      if graph is None: graph = MetalGraph(UOp(Ops.CUSTOM_FUNCTION, src=(linear,), arg="graph"), bufs)
+      graph(bufs, {"var_0": scale, "var_1": bias}, wait=True)
+      np.testing.assert_equal(np.frombuffer(out.as_memoryview(), dtype=np.float32), data * scale + bias)
 
   def test_program_info_stores_value_descriptors(self):
     info = self._program(0, 2, (1,)).arg
@@ -122,15 +137,16 @@ class TestOrderedKernelArgs(unittest.TestCase):
     self.assertNotIn("pra[5].dma.fd", entry)
     self.assertIn("dsp_mixed(buf_0, sz_or_val_1, buf_2)", entry)
 
-  def test_mock_dsp_reuses_duplicate_buffer_slot(self):
-    from tinygrad.runtime.ops_dsp import MockDSPRenderer
-    renderer = object.__new__(MockDSPRenderer)
-    buf, alias = UOp.param(0,dtypes.float32,shape=(4,)), UOp.param(0,dtypes.float32,shape=(8,))
-    entry = renderer._render_entry("dsp_alias", [("buf",(buf,False)), ("alias",(alias,False))])
-    self.assertEqual(entry.count("mmap2("), 2)  # one declaration in the boilerplate, one allocation for the shared slot
-    self.assertIn("mmap2(0, 32", entry)
-    self.assertIn("dsp_alias((void*)buf0, (void*)buf0)", entry)
-    self.assertEqual(entry.count("write(1, buf0, 32)"), 1)
+  def test_aliases_reuse_buffer_slot(self):
+    out, alias = UOp.param(0, dtypes.float32, shape=(4,)), UOp.param(0, dtypes.float32, shape=(8,))
+    variable = UOp.variable("scale", 0, 42, dtypes.int32, param=True)
+    variable = variable.replace(arg=replace(variable.arg, slot=1))
+    r = UOp.range(4, 0)
+    sink = out.index(r).store(alias.index(r+4).load() * variable.cast(dtypes.float32)).end(r).sink(arg=KernelInfo(name="alias_args"))
+    data = np.arange(8, dtype=np.float32)
+    buf = Buffer(Device.DEFAULT, 8, dtypes.float32, initial_value=data.tobytes())
+    run_linear(UOp(Ops.LINEAR, src=(sink.call(UOp.from_buffer(buf)),)), {"scale": 3}, wait=True)
+    np.testing.assert_equal(np.frombuffer(buf.as_memoryview(), dtype=np.float32), np.concatenate((data[4:]*3, data[4:])))
 
   def test_export_preserves_mixed_argument_order(self):
     from extra.export_model import compile_net

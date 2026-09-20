@@ -260,29 +260,20 @@ class MockDSPRenderer(DSPRenderer):
     # https://gpages.juszkiewicz.com.pl/syscalls-table/syscalls.html
     # control register 21 is HEX_REG_QEMU_INSN_CNT, 0x6a15c000 loads it
     msrc = [mockdsp_boilerplate, 'void _start(void) {']
-    buffer_slots = {slot:j for j,slot in enumerate(dict.fromkeys(b[1][0].arg.slot for b in bufs if b[1][0].addrspace is not AddrSpace.ALU))}
-    buffer_sizes = {slot:max(b[1][0].max_numel()*b[1][0].dtype.itemsize for b in bufs if b[1][0].addrspace is not AddrSpace.ALU and
-                            b[1][0].arg.slot == slot) for slot in buffer_slots}
-    seen_slots:set[int] = set()
-    for i,b in enumerate(bufs):
-      if b[1][0].addrspace is not AddrSpace.ALU and b[1][0].arg.slot not in seen_slots:
-        seen_slots.add(slot:=b[1][0].arg.slot)
-        sz = buffer_sizes[slot]
-        # for loop for big reads
-        j = buffer_slots[slot]
-        msrc.append(f"void *buf{j} = mmap2(0, {sz}, 3, 0x21, -1, 0); for(int rd = 0; rd < {sz}; rd += read(0, buf{j}+rd, {sz}-rd));")
-      elif b[1][0].addrspace is AddrSpace.ALU:
-        msrc.append(f"{self._render_dtype(b[1][0].dtype)} val{i}; read(0, &val{i}, {b[1][0].dtype.itemsize});")
+    buffer_sizes:dict[int,int] = {}
+    for _,(u,_) in bufs:
+      if u.addrspace is not AddrSpace.ALU: buffer_sizes[u.arg.slot] = max(buffer_sizes.get(u.arg.slot, 0), u.max_numel()*u.dtype.itemsize)
+    # Transport each logical buffer once, in globals order. Only the kernel call needs ABI order.
+    for slot,sz in sorted(buffer_sizes.items()):
+      msrc.append(f"void *buf{slot} = mmap2(0, {sz}, 3, 0x21, -1, 0); "
+                  f"for(int rd = 0; rd < {sz}; rd += read(0, buf{slot}+rd, {sz}-rd));")
+    for i,(_, (u,_)) in enumerate(bufs):
+      if u.addrspace is AddrSpace.ALU: msrc.append(f"{self._render_dtype(u.dtype)} val{i}; read(0, &val{i}, {u.dtype.itemsize});")
     msrc.append("unsigned int st = inscount();")
-    params = [(f'(void*)buf{buffer_slots[b[1][0].arg.slot]}' if b[1][0].addrspace is not AddrSpace.ALU else f'val{i}')
-              for i,b in enumerate(bufs)]
+    params = [f'val{i}' if u.addrspace is AddrSpace.ALU else f'(void*)buf{u.arg.slot}' for i,(_, (u,_)) in enumerate(bufs)]
     msrc.append(f"{function_name}({', '.join(params)});")
     msrc.append("unsigned int et = inscount() - st; write(1, &et, sizeof(et));")
-    seen_slots.clear()
-    for i,b in enumerate(bufs):
-      if b[1][0].addrspace is AddrSpace.ALU or b[1][0].arg.slot in seen_slots: continue
-      seen_slots.add(b[1][0].arg.slot)
-      msrc.append(f"write(1, buf{buffer_slots[b[1][0].arg.slot]}, {buffer_sizes[b[1][0].arg.slot]});")
+    msrc += [f"write(1, buf{slot}, {sz});" for slot,sz in sorted(buffer_sizes.items())]
     msrc.append('exit(0); }')
     return '\n'.join(msrc)
 
@@ -293,21 +284,12 @@ class MockDSPProgram(Program[DSPDevice]):
       dsp_lib.write(self.lib)
       dsp_lib.flush()
       os.chmod(dsp_lib.name, 0o0777)
-      merged = TinyELF.merge_args(self.signature, bufs, vals)
-      seen_slots:set[int] = set()
-      input_data = []
-      for x,arg in zip(merged, self.signature):
-        if arg.addrspace is AddrSpace.ALU: input_data.append(struct.pack(unwrap(arg.dtype.fmt), x))
-        elif arg.slot not in seen_slots:
-          seen_slots.add(arg.slot)
-          input_data.append(bytes(to_mv(x.va_addr, x.size)))
       proc = subprocess.run(["qemu-hexagon-static", *(['-strace'] if DEBUG >= 5 else []), dsp_lib.name],
-        input=b''.join(input_data), stdout=subprocess.PIPE, check=True)
+        input=b''.join([bytes(to_mv(x.va_addr, x.size)) for x in bufs] +
+                       [struct.pack(unwrap(arg.dtype.fmt), vals[arg.slot]) for arg in self.signature if arg.addrspace is AddrSpace.ALU]),
+        stdout=subprocess.PIPE, check=True)
     offset = 4
-    seen_slots.clear()
-    for x,arg in zip(merged, self.signature):
-      if arg.addrspace is AddrSpace.ALU or arg.slot in seen_slots: continue
-      seen_slots.add(arg.slot)
+    for x in bufs:
       to_mv(x.va_addr, x.size)[:] = proc.stdout[offset:offset+x.size]
       offset += x.size
     assert offset == len(proc.stdout)
