@@ -6,6 +6,8 @@ from tinygrad.tensor import Tensor
 from tinygrad.helpers import Context
 from tinygrad.dtype import dtypes
 from tinygrad.engine.realize import run_linear, compile_linear
+from tinygrad.engine.jit import graph_class
+from test.helpers import needs_second_gpu
 from tinygrad.uop.ops import UOp, Ops
 
 
@@ -52,6 +54,28 @@ def zero_bufs(bufs):
 class TestGraph(unittest.TestCase):
   def skip_if_no_offset(self):
     if Device.DEFAULT in {"WEBGPU", "CL"}: self.skipTest("device does not support _offset")
+
+  @needs_second_gpu
+  def test_store_graph_rebinds_nonzero_views(self):
+    self.skip_if_no_offset()
+    d0, d1, size, n = Device.DEFAULT, f"{Device.DEFAULT}:1", 16, 4
+    dst, src = UOp.param(0, dtypes.int, size, d0), UOp.param(1, dtypes.int, size, d1)
+    call = dst.shrink(((3, 3+n),)).store_call(src.shrink(((5, 5+n),)))
+    if not graph_class(Device[d0]).supports_uop([Device[d0], Device[d1]], call): self.skipTest("graph does not support bulk STORE")
+    graph_ast = UOp(Ops.CUSTOM_FUNCTION, src=(UOp(Ops.LINEAR, src=(call,)),), arg="graph")
+
+    captured = (make_buffer(d0, size, fill=True), make_buffer(d1, size, fill=True))
+    captured_dst = np.frombuffer(captured[0].as_memoryview(), np.int32).copy()
+    graph = Device[d0].graph(graph_ast, tuple(UOp.from_buffer(x) for x in captured))
+
+    replay = (make_buffer(d0, size, fill=True), make_buffer(d1, size, fill=True))
+    expected = np.frombuffer(replay[0].as_memoryview(), np.int32).copy()
+    source = np.frombuffer(replay[1].as_memoryview(), np.int32).copy()
+    graph(tuple(UOp.from_buffer(x) for x in replay), {})
+    Device[d0].synchronize()
+    expected[3:3+n] = source[5:5+n]
+    np.testing.assert_equal(expected, np.frombuffer(replay[0].as_memoryview(), np.int32))
+    np.testing.assert_equal(captured_dst, np.frombuffer(captured[0].as_memoryview(), np.int32))
 
   def test_order_2_writes_to_same_buf(self):
     d0 = Device.DEFAULT
