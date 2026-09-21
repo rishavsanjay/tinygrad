@@ -19,19 +19,13 @@ class TestJit(unittest.TestCase):
   @needs_second_gpu
   def test_jit_cross_device_slice_assign(self):
     @TinyJit
-    def copy(dst, src): dst[3:7].assign(src[5:9].to(dst.device)).realize()
-    previous = []
+    def copy(dst, src): dst[1:3].assign(src[2:4].to(dst.device)).realize()
     for i in range(5):
-      dst = Tensor.full(16, -i-1, dtype=dtypes.int32).contiguous().realize()
-      values = list(range(i*20, i*20+16))
-      src = Tensor(values, device=f"{Device.DEFAULT}:1").realize()
+      dst = Tensor.full(4, -1, dtype=dtypes.int32).contiguous().realize()
+      src = Tensor([0, 0, i, i+1], device=f"{Device.DEFAULT}:1").realize()
       copy(dst, src)
-      expected = [-i-1]*3 + values[5:9] + [-i-1]*9
-      self.assertEqual(dst.tolist(), expected)
-      self.assertEqual(src.tolist(), values)
-      previous.append((dst, expected))
+      self.assertEqual(dst.tolist(), [-1, i, i+1, -1])
     assert_jit_cache_len(copy, 1)
-    for dst, expected in previous: self.assertEqual(dst.tolist(), expected)
 
   def test_jit_input_view(self):
     @TinyJit

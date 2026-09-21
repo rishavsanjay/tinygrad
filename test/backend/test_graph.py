@@ -70,24 +70,20 @@ class TestGraph(unittest.TestCase):
   def test_copy_graph_rebinds_nonzero_views(self):
     self.skip_if_not_multigraph()
     self.skip_if_no_offset()
-    d0, d1, size, n = Device.DEFAULT, f"{Device.DEFAULT}:1", 16, 4
-    dst, src = UOp.param(0, dtypes.int, size, d0), UOp.param(1, dtypes.int, size, d1)
-    copy = UOp(Ops.COPY, src=(UOp.param(1, dtypes.int, n, d1),), arg=d0)
-    call = copy.call(dst.shrink(((3, 3+n),)), src.shrink(((5, 5+n),)))
+    d0, d1 = Device.DEFAULT, f"{Device.DEFAULT}:1"
+    dst, src = UOp.param(0, dtypes.int, 4, d0), UOp.param(1, dtypes.int, 4, d1)
+    call = src.shrink(((2, 4),)).copy_to_device(d0).call(dst.shrink(((1, 3),)), src.shrink(((2, 4),)))
     graph_ast = UOp(Ops.CUSTOM_FUNCTION, src=(UOp(Ops.LINEAR, src=(call,)),), arg="graph")
-
-    captured = (make_buffer(d0, size, fill=True), make_buffer(d1, size, fill=True))
-    captured_dst = np.frombuffer(captured[0].as_memoryview(), np.int32).copy()
-    graph = Device[d0].graph(graph_ast, tuple(UOp.from_buffer(x) for x in captured))
-
-    replay = (make_buffer(d0, size, fill=True), make_buffer(d1, size, fill=True))
-    expected = np.frombuffer(replay[0].as_memoryview(), np.int32).copy()
-    source = np.frombuffer(replay[1].as_memoryview(), np.int32).copy()
-    graph(tuple(UOp.from_buffer(x) for x in replay), {})
-    Device[d0].synchronize()
-    expected[3:3+n] = source[5:5+n]
-    np.testing.assert_equal(expected, np.frombuffer(replay[0].as_memoryview(), np.int32))
-    np.testing.assert_equal(captured_dst, np.frombuffer(captured[0].as_memoryview(), np.int32))
+    captured = [make_buffer(d, size=4, fill=True) for d in (d0, d1)]
+    graph = Device[d0].graph(graph_ast, tuple(UOp.from_buffer(b) for b in captured))
+    expected = np.frombuffer(captured[0].as_memoryview(), np.int32).copy()
+    for _ in range(RUN_CNT):
+      b = [make_buffer(d, size=4, fill=True) for d in (d0, d1)]
+      result = np.frombuffer(b[0].as_memoryview(), np.int32).copy()
+      result[1:3] = np.frombuffer(b[1].as_memoryview(), np.int32)[2:4]
+      graph(tuple(UOp.from_buffer(x) for x in b), {}, wait=True)
+      np.testing.assert_equal(result, np.frombuffer(b[0].as_memoryview(), np.int32))
+      np.testing.assert_equal(expected, np.frombuffer(captured[0].as_memoryview(), np.int32))
 
   def test_order_2_writes_to_same_buf(self):
     d0 = Device.DEFAULT

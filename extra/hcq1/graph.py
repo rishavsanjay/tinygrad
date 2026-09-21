@@ -22,8 +22,7 @@ class HCQGraph(MultiGraphRunner):
 
     for j, replace in enumerate(self.uop_replace):
       for pos, _ in replace:
-        x = self.input_replace_to_var.setdefault((j,pos), UOp.variable(f"inp_{j}_{pos}_{self.calls[j][0]}", 0, 0xffffffffffffffff,
-                                                                        dtype=dtypes.uint64))
+        x = self.input_replace_to_var.setdefault((j,pos), UOp.variable(f"inp_{j}_{pos}", 0, 0xffffffffffffffff, dtype=dtypes.uint64))
         self.hcq_bufs[j][pos] = HCQBuffer(x, self.hcq_bufs[j][pos].size) # Create fake buffer with variable
 
     # Allocate kernel args.
@@ -199,9 +198,9 @@ class HCQGraph(MultiGraphRunner):
         self.num_rdma_ops[(dest_rdma, src_rdma)] += 1
       elif ast.op is Ops.COPY:
         dest, src = bufs[0], bufs[1]
-        replace_pos = {pos for pos, _ in self.uop_replace[j]}
+        uop_replace_j = dict(self.uop_replace[j])
         for bufid in range(len(bufs)):
-          if bufid in replace_pos: self.input_replace_map[enqueue_dev].add((j, bufid))
+          if bufid in uop_replace_j: self.input_replace_map[enqueue_dev].add((j, bufid))
           else: cast(HCQAllocator, enqueue_dev.allocator)._map(self.hcq_bufs[j][bufid])
         enqueue_queue.copy(self.hcq_bufs[j][0], self.hcq_bufs[j][1], dest.nbytes)
         self.copy_to_devs[cast(HCQCompiled, Device[dest.device])].add(cast(HCQCompiled, Device[src.device]))
@@ -263,10 +262,11 @@ class HCQGraph(MultiGraphRunner):
   def _dev_copy_queues(self, dev): return [q for (d, _), q in self.copy_queues.items() if d == dev]
 
   def __call__(self, input_uops:tuple[UOp, ...], var_vals:dict[str, int], wait=False) -> float|None:
+    buffers = [dict(self.updated_buffers(j, input_uops)) for j in range(len(self.calls))]
     # Map input buffers
     for dev in self.devices:
       for j, pos in self.input_replace_map[dev]:
-        buf = dict(self.updated_buffers(j, input_uops))[pos]
+        buf = buffers[j][pos]
         cast(HCQAllocator, dev.allocator)._map(buf._buf)
 
     # Wait and restore signals
@@ -279,8 +279,8 @@ class HCQGraph(MultiGraphRunner):
                     **{sig.base_buf.va_addr.expr: dev.timeline_signal.base_buf.va_addr for dev, sig in self.virt_timeline_signals.items()}}
 
     # Update buffers
-    for j in range(len(self.uop_replace)):
-      for pos, buf in self.updated_buffers(j, input_uops):
+    for j, bufs in enumerate(buffers):
+      for pos, buf in bufs.items():
         hcq_var_vals[self.input_replace_to_var[(j,pos)].expr] = buf._buf.va_addr
 
     for (var, qp) in self.rdma_vars.values(): hcq_var_vals[var.expr] = qp.head

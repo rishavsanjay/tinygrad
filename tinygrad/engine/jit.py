@@ -131,9 +131,10 @@ class GraphRunner:
   def __call__(self, input_uops:tuple[UOp, ...], var_vals:dict[str, int], wait=False) -> float|None: raise NotImplementedError("override this")
 
   def updated_buffers(self, j:int, input_uops:tuple[UOp, ...]):
+    dev_idx = self.calls[j][0]
     for pos, u in self.uop_replace[j]:
       buf = _resolve(u, input_uops).buffer
-      yield pos, (buf.bufs[self.calls[j][0]] if isinstance(buf, MultiBuffer) else buf).ensure_allocated()
+      yield pos, (buf.bufs[dev_idx] if isinstance(buf, MultiBuffer) else buf).ensure_allocated()
 
   def updated_vars(self, var_vals: dict[str, int]):
     vals = [var_vals[v] for v in self.vars]
