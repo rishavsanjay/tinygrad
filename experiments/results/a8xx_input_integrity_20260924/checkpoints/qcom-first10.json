@@ -1,0 +1,151 @@
+{
+  "device": "QCOM",
+  "seed": 42,
+  "context": {
+    "FLOAT16": 0,
+    "OPENPILOT_HACKS": 0,
+    "JIT_BATCH_SIZE": 32
+  },
+  "records": [
+    {
+      "index": 1,
+      "op": "Cast",
+      "name": "_to_copy_1",
+      "shape": [
+        1,
+        12,
+        128,
+        256
+      ],
+      "min": 0.0,
+      "max": 255.0,
+      "finite": true
+    },
+    {
+      "index": 2,
+      "op": "Concat",
+      "name": "cat",
+      "shape": [
+        1,
+        24,
+        128,
+        256
+      ],
+      "min": 0.0,
+      "max": 255.0,
+      "finite": true
+    },
+    {
+      "index": 3,
+      "op": "Sub",
+      "name": "sub",
+      "shape": [
+        1,
+        24,
+        128,
+        256
+      ],
+      "min": -127.5,
+      "max": 127.5,
+      "finite": true
+    },
+    {
+      "index": 4,
+      "op": "Div",
+      "name": "div",
+      "shape": [
+        1,
+        24,
+        128,
+        256
+      ],
+      "min": -2.0,
+      "max": 2.0,
+      "finite": true
+    },
+    {
+      "index": 5,
+      "op": "Conv",
+      "name": "conv2d",
+      "shape": [
+        1,
+        64,
+        64,
+        128
+      ],
+      "min": -92.3125,
+      "max": 110.6875,
+      "finite": true
+    },
+    {
+      "index": 6,
+      "op": "Gelu",
+      "name": "gelu",
+      "shape": [
+        1,
+        64,
+        64,
+        128
+      ],
+      "min": -0.170166015625,
+      "max": 110.6875,
+      "finite": true
+    },
+    {
+      "index": 7,
+      "op": "Conv",
+      "name": "conv2d_1",
+      "shape": [
+        1,
+        64,
+        32,
+        64
+      ],
+      "min": -733.0,
+      "max": 152.5,
+      "finite": true
+    },
+    {
+      "index": 8,
+      "op": "Gelu",
+      "name": "gelu_1",
+      "shape": [
+        1,
+        64,
+        32,
+        64
+      ],
+      "min": -0.170166015625,
+      "max": 152.5,
+      "finite": true
+    },
+    {
+      "index": 9,
+      "op": "Conv",
+      "name": "conv2d_2",
+      "shape": [
+        1,
+        64,
+        32,
+        64
+      ],
+      "min": -248.5,
+      "max": 160.375,
+      "finite": true
+    },
+    {
+      "index": 10,
+      "op": "Gelu",
+      "name": "gelu_2",
+      "shape": [
+        1,
+        64,
+        32,
+        64
+      ],
+      "min": -0.170166015625,
+      "max": 160.375,
+      "finite": true
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+{
+  "device": "QCOM",
+  "seed": 43,
+  "context": {
+    "FLOAT16": 0,
+    "OPENPILOT_HACKS": 0,
+    "JIT_BATCH_SIZE": 32
+  },
+  "records": [
+    {
+      "index": 0,
+      "op": "Cast",
+      "name": "_to_copy",
+      "shape": [
+        1,
+        12,
+        128,
+        256
+      ],
+      "min": 0.0,
+      "max": 255.0,
+      "finite": true
+    },
+    {
+      "index": 5,
+      "op": "Conv",
+      "name": "conv2d",
+      "shape": [
+        1,
+        64,
+        64,
+        128
+      ],
+      "min": -107.6875,
+      "max": 109.4375,
+      "finite": true
+    },
+    {
+      "index": 10,
+      "op": "Gelu",
+      "name": "gelu_2",
+      "shape": [
+        1,
+        64,
+        32,
+        64
+      ],
+      "min": -0.170166015625,
+      "max": 185.875,
+      "finite": true
+    },
+    {
+      "index": 20,
+      "op": "Conv",
+      "name": "conv2d_9",
+      "shape": [
+        1,
+        192,
+        32,
+        64
+      ],
+      "min": -220.625,
+      "max": 267.75,
+      "finite": true
+    },
+    {
+      "index": 40,
+      "op": "Mul",
+      "name": "mul_3",
+      "shape": [
+        1,
+        128,
+        16,
+        32
+      ],
+      "min": -16.5,
+      "max": 33.8125,
+      "finite": true
+    },
+    {
+      "index": 80,
+      "op": "Conv",
+      "name": "conv2d_43",
+      "shape": [
+        1,
+        256,
+        8,
+        16
+      ],
+      "min": -14.953125,
+      "max": 9.1328125,
+      "finite": true
+    },
+    {
+      "index": 120,
+      "op": "Add",
+      "name": "add_12",
+      "shape": [
+        1,
+        512
+      ],
+      "min": -3.146484375,
+      "max": 16.5625,
+      "finite": true
+    },
+    {
+      "index": 160,
+      "op": "Add",
+      "name": "add_18",
+      "shape": [
+        1,
+        16
+      ],
+      "min": -1.771484375,
+      "max": 2.802734375,
+      "finite": true
+    },
+    {
+      "index": 200,
+      "op": "Gemm",
+      "name": "linear_42",
+      "shape": [
+        1,
+        1024
+      ],
+      "min": -6.6171875,
+      "max": 11.890625,
+      "finite": true
+    },
+    {
+      "index": 240,
+      "op": "Gemm",
+      "name": "linear_62",
+      "shape": [
+        1,
+        55
+      ],
+      "min": -9.3828125,
+      "max": 2.28125,
+      "finite": true
+    },
+    {
+      "index": 280,
+      "op": "Sigmoid",
+      "name": "p_val_17",
+      "shape": [
+        1,
+        512
+      ],
+      "min": 0.02777099609375,
+      "max": 0.9541015625,
+      "finite": true
+    },
+    {
+      "index": 320,
+      "op": "Add",
+      "name": "p_add_4",
+      "shape": [
+        1,
+        9,
+        512
+      ],
+      "min": -342.5,
+      "max": 67.1875,
+      "finite": true
+    },
+    {
+      "index": 350,
+      "op": "Concat",
+      "name": "outputs",
+      "shape": [
+        1,
+        2576
+      ],
+      "min": -1765.0,
+      "max": 2444.0,
+      "finite": true
+    }
+  ]
+}

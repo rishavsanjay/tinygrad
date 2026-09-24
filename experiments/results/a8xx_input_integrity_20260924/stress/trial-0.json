@@ -1,0 +1,8237 @@
+{
+  "seed": 42,
+  "prune": true,
+  "checks": [
+    {
+      "phase": 0,
+      "input": 0,
+      "exact": true,
+      "finite": true,
+      "max_abs": 0.0
+    },
+    {
+      "phase": 1,
+      "input": 0,
+      "exact": true,
+      "finite": true,
+      "max_abs": 0.0
+    },
+    {
+      "phase": 2,
+      "input": 0,
+      "exact": true,
+      "finite": true,
+      "max_abs": 0.0
+    },
+    {
+      "phase": 3,
+      "input": 1,
+      "exact": false,
+      "finite": true,
+      "max_abs": 57.7958984375
+    }
+  ],
+  "manifest": "6cb8998c5df2b84eeb903d0e97f652ef3e7f6b3ddd3c0d952b3f9380fb5aab1d",
+  "kernels": [
+    {
+      "name": "E_256_3_32_4_2_4",
+      "binary_sha256": "84aebb3105e64aa600b8a8481661b36fb9e38c94405651f400651dea011c1e0e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.half",
+          [
+            256,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.uchar",
+          [
+            393216
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.uchar",
+          [
+            393216
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            24
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            24
+          ]
+        ]
+      ],
+      "global_size": "(256, 1, 1)",
+      "local_size": "(3, 32, 1)"
+    },
+    {
+      "name": "r_32_16_50_4",
+      "binary_sha256": "d34694abfc2ba8bbc7f23231aeec9e538548e7b0e76b1362e04585e353bf0823",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.half",
+          [
+            200
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            800,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_32_16_2",
+      "binary_sha256": "9b8f846adf46a49baf19ca87b5e411c4bbb996bdc3b0ea0347b32088c828359a",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.half",
+          [
+            2
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_64_2_2_8_16_4_4_6_3_3_4",
+      "binary_sha256": "6c28b8f17fd78eb9a786d12f03ffd4ad16cae70d0772c34f93742df84c9838fe",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.half",
+          [
+            128,
+            1536,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            432,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 2, 64)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_16_16_8_4",
+      "binary_sha256": "f7ad4fcde8850abe07379d8668de2c7af28adb5717ff7a5169082347d45e06f7",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_8_4",
+      "binary_sha256": "f7ad4fcde8850abe07379d8668de2c7af28adb5717ff7a5169082347d45e06f7",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_2_8_16_4_4_3_3",
+      "binary_sha256": "87fd48a728dbf33e2b85a181e8a120ce0fb443465f788952c327dc05bd0bb066",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            1088,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            2,
+            96,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 32, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_2_8_16_4_4_16_4",
+      "binary_sha256": "2acf0c801021459f93e69b0f13b405168e1a6b427f9d212f32f4c697b3009fae",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            1088,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            272,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 32, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_2_2_8_16_4_4_3_3",
+      "binary_sha256": "359396c9711fe31282fb1018c60ef31749e91c452dd71a2169e9e30acc320d1d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 2, 16)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "E_8_8_8_16_16",
+      "binary_sha256": "746c4e001775e818f39d50f931fcd5e71ef18a05b9ad352744362dee6f36d994",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            131072
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            4096,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 8, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_2_8_16_4_4_7_7",
+      "binary_sha256": "86896ae70612f09c2333ebe1d171dd2f4b55ecb0dcd59a15565eb07ea138b295",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            1088,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            112,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 32, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_6_8_16_4_4_16_4",
+      "binary_sha256": "8bf260a1cdfe9126be188f3667e11a64c7a6e4a3a03cd78e9026b0c519a5f000",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            3072,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            1088,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            816,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            48,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(6, 32, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_2_8_16_4_4_48_4",
+      "binary_sha256": "72e2897cbeb47560369f6a297035752e39453681a3edc85a77a0c3fbe9eb08c4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32,
+            3072,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            192,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 32, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_2_2_8_16_4_4_3_3",
+      "binary_sha256": "359396c9711fe31282fb1018c60ef31749e91c452dd71a2169e9e30acc320d1d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 2, 16)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "E_8_8_8_16_16",
+      "binary_sha256": "746c4e001775e818f39d50f931fcd5e71ef18a05b9ad352744362dee6f36d994",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            131072
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            4096,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 8, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_2_8_16_4_4_7_7",
+      "binary_sha256": "86896ae70612f09c2333ebe1d171dd2f4b55ecb0dcd59a15565eb07ea138b295",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            1088,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            112,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 32, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_6_8_16_4_4_16_4",
+      "binary_sha256": "8bf260a1cdfe9126be188f3667e11a64c7a6e4a3a03cd78e9026b0c519a5f000",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            3072,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            1088,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            816,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            48,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(6, 32, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_2_8_16_4_4_48_4",
+      "binary_sha256": "72e2897cbeb47560369f6a297035752e39453681a3edc85a77a0c3fbe9eb08c4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32,
+            3072,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            192,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 32, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_2_4_8_16_4_7_7",
+      "binary_sha256": "292fd29a8b1a54cf9e48c2b84b3a25c349e4375169950cf416fa0946d8034ed8",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            69632
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            14336
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            128
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(2, 4, 8)"
+    },
+    {
+      "name": "r_8_4_8_16_4_4_32_4",
+      "binary_sha256": "16f96fd56f762da7f0d5bf96b943210bde4af3ecd3d33946c73197b4c0cd448c",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            2176,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            1056,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 8, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_8_16_4_4_3_3",
+      "binary_sha256": "b055f25a72fa5996627e282c6ba6ca6aa82a126830d0e4d216fe204dadb9d3f7",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "E_2_16_8_16_16",
+      "binary_sha256": "9199c58996ee28666c023ec353b79dd9815839bc5de7b597c4273f954c4a4b26",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            65536
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            1024,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_8_4_8_8_2_4_4_7_7",
+      "binary_sha256": "18317ab573f6f3a3b0182124e5c2983c434fa3a00a0d1683ac3e45e8737e3a5f",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            2176,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 8, 1)",
+      "local_size": "(8, 8, 2)"
+    },
+    {
+      "name": "r_8_12_8_16_4_4_32_4",
+      "binary_sha256": "60c561593adac90a7f8c350fff782e2472dcee5d01af4abd73c8a55f41dc21ce",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            2176,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            12,
+            1056,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            96,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(12, 8, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_8_4_8_16_4_4_96_4",
+      "binary_sha256": "55e2103e9e5be916b18c1a76693b1bd1814fca4987010ddb822ea91bae27ca03",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            4,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            4,
+            3072,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 8, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_32_8_16_4_4_3_3",
+      "binary_sha256": "b055f25a72fa5996627e282c6ba6ca6aa82a126830d0e4d216fe204dadb9d3f7",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "E_2_16_8_16_16",
+      "binary_sha256": "9199c58996ee28666c023ec353b79dd9815839bc5de7b597c4273f954c4a4b26",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            65536
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            1024,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_8_4_8_8_2_4_4_7_7",
+      "binary_sha256": "18317ab573f6f3a3b0182124e5c2983c434fa3a00a0d1683ac3e45e8737e3a5f",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            2176,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 8, 1)",
+      "local_size": "(8, 8, 2)"
+    },
+    {
+      "name": "r_8_12_8_16_4_4_32_4",
+      "binary_sha256": "60c561593adac90a7f8c350fff782e2472dcee5d01af4abd73c8a55f41dc21ce",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            2176,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            12,
+            1056,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            96,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(12, 8, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_8_4_8_16_4_4_96_4",
+      "binary_sha256": "55e2103e9e5be916b18c1a76693b1bd1814fca4987010ddb822ea91bae27ca03",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            4,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            4,
+            3072,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 8, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_8_2_8_4_16_4_7_7",
+      "binary_sha256": "de52755419526dd24de76a13aa920548737f984caa2adc4bddca110f944dc897",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            33280
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            28672
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            256
+          ]
+        ]
+      ],
+      "global_size": "(8, 1, 1)",
+      "local_size": "(2, 8, 4)"
+    },
+    {
+      "name": "r_2_8_8_16_4_4_64_4",
+      "binary_sha256": "a03a9d9b988a91c3108207f2145fe66e43361658c38185f4b7317bdec3f1f265",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            2560,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_4_8_4_4_4_3_3",
+      "binary_sha256": "42f368f761bd3483725f2ac811a33b11ef7ef841a70f3b4774fae2e645ca7a2e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(4, 8, 4)"
+    },
+    {
+      "name": "E_32_8_8_16",
+      "binary_sha256": "ae065078204024b0b7b5584ce716d43620b79db6288a48483ff08b159ccc7ea4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32768
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_2_8_8_4_4_4_4_7_7",
+      "binary_sha256": "822a9406cc0f535ac288c405e3f850a206896d80590a2d024ca4dce902feee1d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 4, 4)"
+    },
+    {
+      "name": "r_2_24_8_16_4_4_64_4",
+      "binary_sha256": "8eab36f84d8cddb768008d65d515f1f4becd917867ea526b7d55a52d78c2cf6e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            24,
+            2560,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            12,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(24, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_2_8_8_16_4_4_192_4",
+      "binary_sha256": "d94a4445166fb9423b2275b1d5ef29226a2a78a06c4395d038d18986078a5394",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_4_8_4_4_4_3_3",
+      "binary_sha256": "42f368f761bd3483725f2ac811a33b11ef7ef841a70f3b4774fae2e645ca7a2e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(4, 8, 4)"
+    },
+    {
+      "name": "E_32_8_8_16",
+      "binary_sha256": "ae065078204024b0b7b5584ce716d43620b79db6288a48483ff08b159ccc7ea4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32768
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_2_8_8_4_4_4_4_7_7",
+      "binary_sha256": "822a9406cc0f535ac288c405e3f850a206896d80590a2d024ca4dce902feee1d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 4, 4)"
+    },
+    {
+      "name": "r_2_24_8_16_4_4_64_4",
+      "binary_sha256": "8eab36f84d8cddb768008d65d515f1f4becd917867ea526b7d55a52d78c2cf6e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            24,
+            2560,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            12,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(24, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_2_8_8_16_4_4_192_4",
+      "binary_sha256": "d94a4445166fb9423b2275b1d5ef29226a2a78a06c4395d038d18986078a5394",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_4_8_4_4_4_3_3",
+      "binary_sha256": "42f368f761bd3483725f2ac811a33b11ef7ef841a70f3b4774fae2e645ca7a2e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(4, 8, 4)"
+    },
+    {
+      "name": "E_32_8_8_16",
+      "binary_sha256": "ae065078204024b0b7b5584ce716d43620b79db6288a48483ff08b159ccc7ea4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32768
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_2_8_8_4_4_4_4_7_7",
+      "binary_sha256": "822a9406cc0f535ac288c405e3f850a206896d80590a2d024ca4dce902feee1d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 4, 4)"
+    },
+    {
+      "name": "r_2_24_8_16_4_4_64_4",
+      "binary_sha256": "8eab36f84d8cddb768008d65d515f1f4becd917867ea526b7d55a52d78c2cf6e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            24,
+            2560,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            12,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(24, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_2_8_8_16_4_4_192_4",
+      "binary_sha256": "d94a4445166fb9423b2275b1d5ef29226a2a78a06c4395d038d18986078a5394",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_4_8_4_4_4_3_3",
+      "binary_sha256": "42f368f761bd3483725f2ac811a33b11ef7ef841a70f3b4774fae2e645ca7a2e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(4, 8, 4)"
+    },
+    {
+      "name": "E_32_8_8_16",
+      "binary_sha256": "ae065078204024b0b7b5584ce716d43620b79db6288a48483ff08b159ccc7ea4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32768
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_2_8_8_4_4_4_4_7_7",
+      "binary_sha256": "822a9406cc0f535ac288c405e3f850a206896d80590a2d024ca4dce902feee1d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 4, 4)"
+    },
+    {
+      "name": "r_2_24_8_16_4_4_64_4",
+      "binary_sha256": "8eab36f84d8cddb768008d65d515f1f4becd917867ea526b7d55a52d78c2cf6e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            24,
+            2560,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            12,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(24, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_2_8_8_16_4_4_192_4",
+      "binary_sha256": "d94a4445166fb9423b2275b1d5ef29226a2a78a06c4395d038d18986078a5394",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_4_8_4_4_4_3_3",
+      "binary_sha256": "42f368f761bd3483725f2ac811a33b11ef7ef841a70f3b4774fae2e645ca7a2e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(4, 8, 4)"
+    },
+    {
+      "name": "E_32_8_8_16",
+      "binary_sha256": "ae065078204024b0b7b5584ce716d43620b79db6288a48483ff08b159ccc7ea4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32768
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_2_8_8_4_4_4_4_7_7",
+      "binary_sha256": "822a9406cc0f535ac288c405e3f850a206896d80590a2d024ca4dce902feee1d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 4, 4)"
+    },
+    {
+      "name": "r_2_24_8_16_4_4_64_4",
+      "binary_sha256": "8eab36f84d8cddb768008d65d515f1f4becd917867ea526b7d55a52d78c2cf6e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            24,
+            2560,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            12,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(24, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_2_8_8_16_4_4_192_4",
+      "binary_sha256": "d94a4445166fb9423b2275b1d5ef29226a2a78a06c4395d038d18986078a5394",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_16_4_8_4_4_4_3_3",
+      "binary_sha256": "42f368f761bd3483725f2ac811a33b11ef7ef841a70f3b4774fae2e645ca7a2e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            48,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(4, 8, 4)"
+    },
+    {
+      "name": "E_32_8_8_16",
+      "binary_sha256": "ae065078204024b0b7b5584ce716d43620b79db6288a48483ff08b159ccc7ea4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32768
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_2_8_8_4_4_4_4_7_7",
+      "binary_sha256": "822a9406cc0f535ac288c405e3f850a206896d80590a2d024ca4dce902feee1d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 4, 4)"
+    },
+    {
+      "name": "r_2_24_8_16_4_4_64_4",
+      "binary_sha256": "8eab36f84d8cddb768008d65d515f1f4becd917867ea526b7d55a52d78c2cf6e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1040,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            24,
+            2560,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            12,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(24, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_2_8_8_16_4_4_192_4",
+      "binary_sha256": "d94a4445166fb9423b2275b1d5ef29226a2a78a06c4395d038d18986078a5394",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32,
+            768,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            8,
+            6144,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 2, 1)",
+      "local_size": "(8, 16, 1)"
+    },
+    {
+      "name": "r_4_2_16_2_16_4_7_7",
+      "binary_sha256": "d2ab6b3c9183e28a075640ec4fb8b631d6475e24aba333a56c6b09d9c37d49a2",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16512
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            57344
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            512
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(2, 16, 2)"
+    },
+    {
+      "name": "r_16_8_8_4_4_128_4",
+      "binary_sha256": "4db73e0e1f0d3319de036004aa4a000033c4e6b5272de45fa5b8fb28488a45c9",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            258,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            4608,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_8_2_4_16_4_4_3_3",
+      "binary_sha256": "fd8adf602aa40973bc21a54174b14d353994bc6ab5353c930f72a1f544abf27a",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            4,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            192,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 1, 1)",
+      "local_size": "(2, 4, 16)"
+    },
+    {
+      "name": "E_8_64_2_16",
+      "binary_sha256": "79c1569b50405815edbd473c6414ff56e795db31fe7d58a5efcebfd8c02c5b46",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16384
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            512,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 1, 1)",
+      "local_size": "(64, 2, 1)"
+    },
+    {
+      "name": "r_16_8_2_4_4_4_7_7",
+      "binary_sha256": "0222825d3d8622e534ddd9224c7594e5389fa8993cebf9ea896efecca6904af5",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            129,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            4,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(8, 2, 4)"
+    },
+    {
+      "name": "r_48_8_8_4_4_128_4",
+      "binary_sha256": "3d10ec29fae58214352cd9ac1a5e476b861c5739911710da6374129b110e1011",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            1536,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            258,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            48,
+            4608,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            24,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(48, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_16_8_8_4_4_384_4",
+      "binary_sha256": "7b4670b599d2813544fd1a028a4cecf6f5ecc99dd51016df8979d9df33ba0b1e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            8,
+            1536,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            12288,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_8_2_4_16_4_4_3_3",
+      "binary_sha256": "fd8adf602aa40973bc21a54174b14d353994bc6ab5353c930f72a1f544abf27a",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            4,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            8,
+            192,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 1, 1)",
+      "local_size": "(2, 4, 16)"
+    },
+    {
+      "name": "E_8_64_2_16",
+      "binary_sha256": "79c1569b50405815edbd473c6414ff56e795db31fe7d58a5efcebfd8c02c5b46",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16384
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            512,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 1, 1)",
+      "local_size": "(64, 2, 1)"
+    },
+    {
+      "name": "r_16_8_2_4_4_4_7_7",
+      "binary_sha256": "0222825d3d8622e534ddd9224c7594e5389fa8993cebf9ea896efecca6904af5",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            129,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            4,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            448,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(8, 2, 4)"
+    },
+    {
+      "name": "r_48_8_8_4_4_128_4",
+      "binary_sha256": "3d10ec29fae58214352cd9ac1a5e476b861c5739911710da6374129b110e1011",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            1536,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            258,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            48,
+            4608,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            24,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(48, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_16_8_8_4_4_384_4",
+      "binary_sha256": "7b4670b599d2813544fd1a028a4cecf6f5ecc99dd51016df8979d9df33ba0b1e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            8,
+            1536,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            12288,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(8, 8, 1)"
+    },
+    {
+      "name": "r_32_2_4_2_16_4_3_3",
+      "binary_sha256": "a5f6b6f78c147dc367790d5fe773fed673d7d143619a52c2b42832e3c0691c1c",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            4,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            24576
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1024
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(2, 4, 2)"
+    },
+    {
+      "name": "r_8_128_4_8",
+      "binary_sha256": "ab07b98ab276a4f12eda9788c81807bf9ae23909e4711017bc8a515c14cc12d9",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1040
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            1024,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(8, 1, 1)",
+      "local_size": "(128, 1, 1)"
+    },
+    {
+      "name": "r_16_16_4_16_4",
+      "binary_sha256": "1276441c567d3adf07c280e2921866e99dc231c7db62e5b233860fd3ce4dd44e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            80
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1040
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            1088,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_2_128_4_16_4",
+      "binary_sha256": "0d3876b6198a2c415055daeeefd9ca76315125bebc14eb4ae7eb931721fc6cd7",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            4,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            80
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            256,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            2,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(2, 1, 1)",
+      "local_size": "(128, 1, 1)"
+    },
+    {
+      "name": "r_64_16_8_4",
+      "binary_sha256": "40df7c2c9e68771e54c6c319b8cb8c72b9c5b7d1626c50d0d98005e42bd60bbe",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            64,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(64, 1, 1)"
+    },
+    {
+      "name": "r_128_16_16_16_4",
+      "binary_sha256": "b195b9a50597815db63c1da159636b61cbe98c91849c1b14a5c7fc33d6d9e427",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            128,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(128, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_32_4",
+      "binary_sha256": "e2ff49e78e7e506daf85dedb08e3b7ee5b28259a170c535c11de640e53676037",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            8192,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_32_4",
+      "binary_sha256": "e2ff49e78e7e506daf85dedb08e3b7ee5b28259a170c535c11de640e53676037",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            8192,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_32_4",
+      "binary_sha256": "e2ff49e78e7e506daf85dedb08e3b7ee5b28259a170c535c11de640e53676037",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            8192,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_8_4",
+      "binary_sha256": "9cc3267e1c1066bc0cf3dbf4d659bc61d8c55c216e6ca31ae6fa0c0acce04c1a",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_8_4",
+      "binary_sha256": "9cc3267e1c1066bc0cf3dbf4d659bc61d8c55c216e6ca31ae6fa0c0acce04c1a",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_8_4",
+      "binary_sha256": "845de6da6022501a59d983722ee08f324045599dbab05953c49ad8260cefc346",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_8_4",
+      "binary_sha256": "845de6da6022501a59d983722ee08f324045599dbab05953c49ad8260cefc346",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "a3d47c9be793dd2e4e3b013b05a85b9088fd87056c3aae272f7120ef6501b14f",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            1
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "6640e2b3164d7020be463f7d312836a15e7ec42df4fccb0e20cd1ef5ec751813",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            1
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_8_4",
+      "binary_sha256": "901edb61f2e07c7d4acf6d91767cdf35342f03a644ea736be4bba5cb71a72b03",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_8_4",
+      "binary_sha256": "34a769c683919981c5ef2f306a2373e4edf2975f86cd38fccb135e9e8e0288d0",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_8_4",
+      "binary_sha256": "34a769c683919981c5ef2f306a2373e4edf2975f86cd38fccb135e9e8e0288d0",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_8_4",
+      "binary_sha256": "34a769c683919981c5ef2f306a2373e4edf2975f86cd38fccb135e9e8e0288d0",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_8_4",
+      "binary_sha256": "34a769c683919981c5ef2f306a2373e4edf2975f86cd38fccb135e9e8e0288d0",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_4",
+      "binary_sha256": "227615b32cb552f141bdd84eb96bb3a9a6f3cfc743a4319e69abcae6d1f4ccc2",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "26f8a61965529d9f5842e70c3197be484d07779610b36b82219e2c12c98e2e0c",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "26f8a61965529d9f5842e70c3197be484d07779610b36b82219e2c12c98e2e0c",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "26f8a61965529d9f5842e70c3197be484d07779610b36b82219e2c12c98e2e0c",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "26f8a61965529d9f5842e70c3197be484d07779610b36b82219e2c12c98e2e0c",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_4",
+      "binary_sha256": "22c09ea67adca551934d0211fd28c6b38f45eaad49cc596426fa1e70f0ebe42e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            4,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "74d984afe072b63f4319bec111143975c74e601ea578fbd423481375163c226d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "74d984afe072b63f4319bec111143975c74e601ea578fbd423481375163c226d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "74d984afe072b63f4319bec111143975c74e601ea578fbd423481375163c226d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "74d984afe072b63f4319bec111143975c74e601ea578fbd423481375163c226d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_8_4",
+      "binary_sha256": "901edb61f2e07c7d4acf6d91767cdf35342f03a644ea736be4bba5cb71a72b03",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_16_8_4",
+      "binary_sha256": "34a769c683919981c5ef2f306a2373e4edf2975f86cd38fccb135e9e8e0288d0",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_8_4",
+      "binary_sha256": "34a769c683919981c5ef2f306a2373e4edf2975f86cd38fccb135e9e8e0288d0",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_8_4",
+      "binary_sha256": "901edb61f2e07c7d4acf6d91767cdf35342f03a644ea736be4bba5cb71a72b03",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_16_8_4",
+      "binary_sha256": "34a769c683919981c5ef2f306a2373e4edf2975f86cd38fccb135e9e8e0288d0",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_4",
+      "binary_sha256": "227615b32cb552f141bdd84eb96bb3a9a6f3cfc743a4319e69abcae6d1f4ccc2",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_4_4",
+      "binary_sha256": "128e732b5bfded79481b3e2bd00b94dba42bdf9ec9ccf5b1e022fb84b5c3e8f8",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "26f8a61965529d9f5842e70c3197be484d07779610b36b82219e2c12c98e2e0c",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_4",
+      "binary_sha256": "227615b32cb552f141bdd84eb96bb3a9a6f3cfc743a4319e69abcae6d1f4ccc2",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            4,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_4_4",
+      "binary_sha256": "128e732b5bfded79481b3e2bd00b94dba42bdf9ec9ccf5b1e022fb84b5c3e8f8",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_4",
+      "binary_sha256": "22c09ea67adca551934d0211fd28c6b38f45eaad49cc596426fa1e70f0ebe42e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            4,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_4_4",
+      "binary_sha256": "f472f1bdba5050ac27695ccad50ac88e2728a7e75966dc7f086ebabb212b9c48",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            16
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "74d984afe072b63f4319bec111143975c74e601ea578fbd423481375163c226d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_4_16_16_4",
+      "binary_sha256": "22c09ea67adca551934d0211fd28c6b38f45eaad49cc596426fa1e70f0ebe42e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            4,
+            256,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_4_4",
+      "binary_sha256": "f472f1bdba5050ac27695ccad50ac88e2728a7e75966dc7f086ebabb212b9c48",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            16
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_197_2_4_64_32_32_32_32_64_16_32_16_16_4",
+      "binary_sha256": "26d4cc95ab957e77c735ebfa0bdc672e4dd17f0745c208962b431eca8001ef3f",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1576
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            64
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            3520
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            55
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1024
+          ]
+        ],
+        [
+          null,
+          6,
+          "dtypes.half",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          7,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          8,
+          "dtypes.half",
+          [
+            384
+          ]
+        ],
+        [
+          null,
+          9,
+          "dtypes.half",
+          [
+            12
+          ]
+        ],
+        [
+          null,
+          10,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          11,
+          "dtypes.half",
+          [
+            192
+          ]
+        ],
+        [
+          null,
+          12,
+          "dtypes.half",
+          [
+            6
+          ]
+        ],
+        [
+          null,
+          13,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          14,
+          "dtypes.half",
+          [
+            384
+          ]
+        ],
+        [
+          null,
+          15,
+          "dtypes.half",
+          [
+            12
+          ]
+        ],
+        [
+          null,
+          16,
+          "dtypes.float",
+          [
+            64
+          ]
+        ],
+        [
+          null,
+          17,
+          "dtypes.half",
+          [
+            33792
+          ]
+        ],
+        [
+          null,
+          18,
+          "dtypes.half",
+          [
+            528
+          ]
+        ],
+        [
+          null,
+          19,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          20,
+          "dtypes.half",
+          [
+            128
+          ]
+        ],
+        [
+          null,
+          21,
+          "dtypes.half",
+          [
+            8
+          ]
+        ],
+        [
+          null,
+          22,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          23,
+          "dtypes.half",
+          [
+            8448
+          ]
+        ],
+        [
+          null,
+          24,
+          "dtypes.half",
+          [
+            264
+          ]
+        ],
+        [
+          null,
+          25,
+          "dtypes.float",
+          [
+            1,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          26,
+          "dtypes.half",
+          [
+            9216
+          ]
+        ],
+        [
+          null,
+          27,
+          "dtypes.half",
+          [
+            144
+          ]
+        ],
+        [
+          null,
+          28,
+          "dtypes.half",
+          [
+            144
+          ]
+        ],
+        [
+          null,
+          29,
+          "dtypes.float",
+          [
+            16
+          ]
+        ],
+        [
+          null,
+          30,
+          "dtypes.half",
+          [
+            48
+          ]
+        ],
+        [
+          null,
+          31,
+          "dtypes.half",
+          [
+            3
+          ]
+        ],
+        [
+          null,
+          32,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          33,
+          "dtypes.float",
+          [
+            1
+          ]
+        ]
+      ],
+      "global_size": "(197, 1, 1)",
+      "local_size": "(2, 1, 1)"
+    },
+    {
+      "name": "E_4_8_9_16",
+      "binary_sha256": "cbb2531268cf25f5d83efbdee06d190af0ee8060031fd639be56764861b68dc9",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.long",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            24,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.float",
+          [
+            1576
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_4_8_9_16_128_4",
+      "binary_sha256": "6c620b93a9fa260bb1f9d8c889f19ad08f0a1f751b44b763ab193dcab70792bb",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            144,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            128,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_4_8_9_16_128_4",
+      "binary_sha256": "438b28546bc41298349f433170bd9813de48bd2c5527ebbdc14ef6f4b22e668e",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            144,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            128,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            9,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          6,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_9_16_8_4",
+      "binary_sha256": "422b55231afb7abdeb4e00ef99544d7e7a51f6d97f0e8e93316700febc53c3bb",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(9, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_9_16_8_4",
+      "binary_sha256": "09a79b96c5a4bbbc09d0a72da10b8a20bc7626182ed2e44a13c69890c86d9576",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            9
+          ]
+        ]
+      ],
+      "global_size": "(9, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "E_4_8_9_16",
+      "binary_sha256": "26f864b13445df831e571c2713882d03e0f24541d4f28f30700d62baa694d138",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.float",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_12_8_9_16_128_4",
+      "binary_sha256": "71a3ac3bde68015e8ba48fbf8d94018a74a22900d1e3c27a796c31d760746611",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            108,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            144,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            128,
+            1536,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            12,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(12, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_2_3_3_9_4_4_16",
+      "binary_sha256": "ca51819d16ee9e02b6ec6dd9e99b2f6582b2c4c9456345429eb4dbae13606463",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            648
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.uchar",
+          [
+            81
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            27,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(3, 2, 1)",
+      "local_size": "(3, 9, 4)"
+    },
+    {
+      "name": "r_72_9",
+      "binary_sha256": "e47cd76641818874e40d321560dd4789b2d7fb4f1c3c434cc17dc04f8d34a8a7",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            72
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            648
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(72, 1, 1)"
+    },
+    {
+      "name": "r_72_9",
+      "binary_sha256": "96b31eeb6a65cb08ff9e7f64da4cbb3f1ceb3fa34aa5234484c191471daa2177",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            72
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            648
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            72
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(72, 1, 1)"
+    },
+    {
+      "name": "r_4_4_9_2_16_9",
+      "binary_sha256": "f191c8fad43ee1da55d0fbce2481b73f26b2a928a31391c634bdad11c70b7dc7",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            4,
+            288,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            648
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            72
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.float",
+          [
+            72
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.float",
+          [
+            27,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(4, 9, 2)"
+    },
+    {
+      "name": "r_4_8_9_16_8_16_4",
+      "binary_sha256": "28317d08eee9ddde313fd54708a49a667765937dc734609804561312e2c55a5d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            8,
+            144,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            8,
+            8192,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_9_16_8_4",
+      "binary_sha256": "422b55231afb7abdeb4e00ef99544d7e7a51f6d97f0e8e93316700febc53c3bb",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(9, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_9_16_8_4",
+      "binary_sha256": "09a79b96c5a4bbbc09d0a72da10b8a20bc7626182ed2e44a13c69890c86d9576",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            9
+          ]
+        ]
+      ],
+      "global_size": "(9, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "E_4_8_9_16",
+      "binary_sha256": "26f864b13445df831e571c2713882d03e0f24541d4f28f30700d62baa694d138",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.float",
+          [
+            9
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_16_8_9_16_128_4",
+      "binary_sha256": "87e42ebd74efeecfa0b2fd5eeadf80223d9b88b4c2fa5e21d772d4d05c814562",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            144,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            144,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            128,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            32,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_4_8_9_16_512_4",
+      "binary_sha256": "c9fc385cde6751dc6b1d3890478333907b92d3ada567168a612814c27114f4cc",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            36,
+            32,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            8,
+            576,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            512,
+            512,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(4, 1, 1)",
+      "local_size": "(8, 9, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "53684ad0cb7bb52492ff4bf5e919273d0226373a9e38a7527cbded5733eb0435",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            144,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "d7415a4c9723143eb20b539c6bdf412c68a4858472a0082ef67fa63574cc42a4",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            144,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_64_16_16_8_4",
+      "binary_sha256": "448f14b2dbb89466fe176dd07e0fd68bc69e31cc89b0c59e1de807743b87d3be",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            64,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(64, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_16_16_4",
+      "binary_sha256": "3f7e6b51ecaba1686ed79a1e3f9e9377b1cb373440b0221966a395c137413f11",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32,
+            4096,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            128,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_16_16_8_4",
+      "binary_sha256": "901edb61f2e07c7d4acf6d91767cdf35342f03a644ea736be4bba5cb71a72b03",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            2048,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_16_8_4",
+      "binary_sha256": "34a769c683919981c5ef2f306a2373e4edf2975f86cd38fccb135e9e8e0288d0",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            8,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            32,
+            128,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(32, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_16_16_16_4_4",
+      "binary_sha256": "868284de503986f1afe70d04504fe8092b583aaf5afce52c1e16a2c0a7b56fd1",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "26f8a61965529d9f5842e70c3197be484d07779610b36b82219e2c12c98e2e0c",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_16_16_16_4_4",
+      "binary_sha256": "3abaa0e1366b4b8709067e019aa53712f36a26fe88b688f6389add830e410e76",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            1024,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            1,
+            64,
+            4
+          ]
+        ]
+      ],
+      "global_size": "(16, 1, 1)",
+      "local_size": "(16, 1, 1)"
+    },
+    {
+      "name": "r_32_4_8",
+      "binary_sha256": "74d984afe072b63f4319bec111143975c74e601ea578fbd423481375163c226d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            16,
+            16,
+            4
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            32
+          ]
+        ]
+      ],
+      "global_size": "(1, 1, 1)",
+      "local_size": "(32, 1, 1)"
+    },
+    {
+      "name": "r_7_2_46_4_64_32_4",
+      "binary_sha256": "2d08d0315bcb3f1435f7c272fb80231ac7c60194bf1ec4832c88a58405f9626d",
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.float",
+          [
+            2576
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.float",
+          [
+            1576
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.float",
+          [
+            1,
+            64,
+            4
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            253440
+          ]
+        ],
+        [
+          null,
+          4,
+          "dtypes.half",
+          [
+            990
+          ]
+        ],
+        [
+          null,
+          5,
+          "dtypes.half",
+          [
+            990
+          ]
+        ],
+        [
+          null,
+          6,
+          "dtypes.float",
+          [
+            32
+          ]
+        ],
+        [
+          null,
+          7,
+          "dtypes.half",
+          [
+            256
+          ]
+        ],
+        [
+          null,
+          8,
+          "dtypes.half",
+          [
+            8
+          ]
+        ],
+        [
+          null,
+          9,
+          "dtypes.half",
+          [
+            2
+          ]
+        ]
+      ],
+      "global_size": "(7, 1, 1)",
+      "local_size": "(2, 46, 1)"
+    }
+  ],
+  "sources": {
+    "tinygrad.runtime.ops_qcom": "3d6e7c89a172ccb1d66efdb67eb9f5bd56381e4027d0e406fe99c33f354c42a6",
+    "tinygrad.runtime.support.compiler_mesa": "b6c67b1a75e5553a0eff92e7e1614c9076d4cf28dcb4b960e1cd20a44c84216d",
+    "tinygrad.engine.jit": "1fea76b61bf0b2361d270396a3c3c375727438afc1fe5374460530377df0e860"
+  },
+  "environment": {
+    "DEV": "QCOM:IR3",
+    "IMAGE": "1",
+    "NOLOCALS": "0",
+    "QCOM_NO_LOCALS": "0",
+    "IMAGE_DOT": "0",
+    "IMAGE_UPCAST_AMOUNT": "16",
+    "QCOM_IMAGE_INVALIDATE": null,
+    "QCOM_DISPATCH_WFI": null,
+    "MESA_PATH": "/data/data/com.termux/files/home/a830_26_2_1_profile_20260901_v1/a830-26.2.1-phone-deploy/libtinymesa.so"
+  }
+}

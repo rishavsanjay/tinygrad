@@ -1,0 +1,12 @@
+{
+  "test/device/test_qcom.py": "30e33548551043cd66d47356df05e55a40d5100d31d6b4e7c32ba88518760fcb",
+  "test/device/test_qcom_image_exec.py": "31ad51bd684e454b7a7977eaf69df7359bcefa334475d177d54d54af38421d53",
+  "test/device/test_qcom_images.py": "3489547d590f77fca8d3fbc0c7d7d545118d70a6c66170f9af636c3d90e4eea6",
+  "tinygrad/renderer/nir.py": "af35a2b15e30b87994e18abe837fe12e6dfe1c8b7eb740ee62cae0a64e81b773",
+  "tinygrad/runtime/ops_qcom.py": "3d6e7c89a172ccb1d66efdb67eb9f5bd56381e4027d0e406fe99c33f354c42a6",
+  "tinygrad/runtime/support/compiler_mesa.py": "b6c67b1a75e5553a0eff92e7e1614c9076d4cf28dcb4b960e1cd20a44c84216d",
+  "tinygrad/runtime/support/ir3.py": "8f0cbeb32b6fd984b2291d926a475bdd8d28fb96ac33d0fb0bd2f006fe62af3e",
+  "test/unit/test_ir3_artifact.py": "cb722768b34f2c39a5acafaee73c840dcbe542e151d2cef5aff1394c5d377c48",
+  "test/device/test_qcom_qualification.py": "b978d0d111ded8aa58d89c126fc0259ecbea976b0ab43d3e0a492e279e4bd792",
+  "experiments/a8xx_fresh_capture.py": "f6d747087928f91016376150c2b134b8307bd05d08828ed86a8bba7f6a0f083d"
+}

@@ -1,0 +1,102 @@
+{
+  "device": "QCOM",
+  "seed": 43,
+  "context": {
+    "FLOAT16": 0,
+    "OPENPILOT_HACKS": 0,
+    "JIT_BATCH_SIZE": 32
+  },
+  "records": [
+    {
+      "index": 0,
+      "op": "Cast",
+      "name": "_to_copy",
+      "shape": [
+        1,
+        12,
+        128,
+        256
+      ],
+      "min": 0.0,
+      "max": 255.0,
+      "finite": true
+    },
+    {
+      "index": 5,
+      "op": "Conv",
+      "name": "conv2d",
+      "shape": [
+        1,
+        64,
+        64,
+        128
+      ],
+      "min": -107.70381927490234,
+      "max": 109.51559448242188,
+      "finite": true
+    },
+    {
+      "index": 40,
+      "op": "Mul",
+      "name": "mul_3",
+      "shape": [
+        1,
+        128,
+        16,
+        32
+      ],
+      "min": -16.71388816833496,
+      "max": 33.972633361816406,
+      "finite": true
+    },
+    {
+      "index": 120,
+      "op": "Add",
+      "name": "add_12",
+      "shape": [
+        1,
+        512
+      ],
+      "min": -3.293491840362549,
+      "max": 17.353004455566406,
+      "finite": true
+    },
+    {
+      "index": 200,
+      "op": "Gemm",
+      "name": "linear_42",
+      "shape": [
+        1,
+        1024
+      ],
+      "min": -7.304749488830566,
+      "max": 12.37164306640625,
+      "finite": true
+    },
+    {
+      "index": 320,
+      "op": "Add",
+      "name": "p_add_4",
+      "shape": [
+        1,
+        9,
+        512
+      ],
+      "min": -342.56732177734375,
+      "max": 65.9864273071289,
+      "finite": true
+    },
+    {
+      "index": 350,
+      "op": "Concat",
+      "name": "outputs",
+      "shape": [
+        1,
+        2576
+      ],
+      "min": -1706.056640625,
+      "max": 2356.943115234375,
+      "finite": true
+    }
+  ]
+}
