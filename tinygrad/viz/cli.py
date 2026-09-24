@@ -100,7 +100,7 @@ def main(args) -> None:
   if profile_bytes is None: raise RuntimeError(f"empty profile in {args.profile_path}")
   profile = decode_profile(profile_bytes)
   profile["layout"].update([(f'{c["name"][5:]}{" SQTT" if s["name"].endswith("PKTS") else ""} {s["name"]}', s["_data"]) for c in viz_data.ctxs
-                            if c["name"].startswith("SQTT") for s in c["steps"] if s["name"].endswith(("PMC", "PKTS"))])
+                            if c["name"].startswith(("SQTT", "QCOM")) for s in c["steps"] if s["name"].endswith(("PMC", "PKTS"))])
   if args.list and not args.src: return print("\n".join(emit(fmt_colored(k)) for k in ["ALL"]+list(profile["layout"])))
 
   # ** SQTT printer

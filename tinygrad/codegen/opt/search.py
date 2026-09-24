@@ -11,19 +11,16 @@ from tinygrad.engine.worker import get_worker_pool, terminate_worker_pool
 from tinygrad.codegen import to_program
 from tinygrad.codegen.opt.postrange import Scheduler
 
-actions = [Opt(op=OptOps.UPCAST, axis=axis, arg=amt) for amt in [0,2,3,4,5,7] for axis in range(8)]
-actions += [Opt(op=OptOps.UNROLL, axis=axis, arg=amt) for amt in [0,4,7] for axis in range(5)]
-actions += [Opt(op=OptOps.LOCAL, axis=axis, arg=amt) for amt in [2,3,4,8,13,16,29] for axis in range(6)]
-actions += [Opt(op=OptOps.GROUPTOP, axis=axis, arg=amt) for amt in [13,16,28,29,32,49,64,256] for axis in range(3)]
-actions += [Opt(op=OptOps.GROUP, axis=axis, arg=amt) for amt in [0,4,8,16] for axis in range(3)]
+actions = [Opt(op=OptOps.SPLIT, axis=axis, arg=(amt, at)) for at in (AxisType.UPCAST, AxisType.UNROLL) for amt in [0,2,3,4,5,7] for axis in range(10)]
+actions += [Opt(op=OptOps.SPLIT, axis=axis, arg=(amt, at)) for at in (AxisType.LOCAL, AxisType.GROUP_REDUCE)
+            for amt in [0,2,3,4,8,13,16,29] for axis in range(8)]
+actions += [Opt(op=OptOps.SPLIT, axis=axis, arg=(amt, AxisType.GROUP_REDUCE, True)) for amt in [13,16,28,29,32,49,64,256] for axis in range(8)]
 if getenv("BEAM_PADTO", 0): actions += [Opt(op=OptOps.PADTO, axis=axis, arg=amt) for amt in [32] for axis in range(7)]
-actions += [Opt(op=OptOps.LOCAL, axis=0, arg=32), Opt(op=OptOps.LOCAL, axis=6, arg=2)]
+actions += [Opt(op=OptOps.SPLIT, axis=0, arg=(32, at)) for at in (AxisType.LOCAL, AxisType.GROUP_REDUCE)]
 actions += [Opt(op=OptOps.TC, axis=0, arg=(-1, 0, getenv("TC", 1)))]
 # covers resnet kernels (3 global * 3 reduce)
 actions += [Opt(op=OptOps.TC, axis=axis, arg=(-1, getenv("TC_OPT", 2), getenv("TC", 1))) for axis in range(9)]
 actions += [Opt(op=OptOps.SWAP, axis=axis_0, arg=axis_1) for axis_0 in range(5) for axis_1 in range(axis_0+1, 5)]
-actions += [Opt(op=OptOps.THREAD, axis=axis, arg=amt) for amt in [2,3,4,5,8,12,16,24,32,64] for axis in range(3)]
-if getenv("NOLOCALS"): actions += [Opt(op=OptOps.NOLOCALS)]
 
 def get_test_global_size(global_size, max_global_size, var_vals):
   test_global_size = [sym_infer(sz, var_vals) for sz in global_size]
@@ -87,12 +84,23 @@ def _ensure_buffer_alloc(bufs:list[Buffer]) -> list[Buffer]: return [buf.ensure_
 def get_kernel_actions(s:Scheduler, include_0=True, max_up:int|None=None) -> dict[int, Scheduler]:
   acted, max_up, max_lcl = {0:s} if include_0 else {}, getenv("BEAM_UPCAST_MAX", 256) if max_up is None else max_up, getenv("BEAM_LOCAL_MAX", 1024)
   kernel_actions = actions.copy()
+  # gen8 IR3 lowers cross-thread group reductions through an early-preamble shared-memory offset
+  # table (shps/getone/stc) that deadlocks the A8xx KGSL context — the timeline freezes and
+  # NO_FAULT_TOLERANCE leaves it unrecoverable, killing every later kernel in the process. The
+  # hand-coded heuristic caps groups at 16 (safe), but beam compounds GROUP_REDUCE splits
+  # (e.g. spans ≥32 threads) into wedging configurations, so exclude the whole family from the
+  # gen8 search space.
+  if s.ren.target.device == "QCOM" and s.ren.target.arch.startswith("a8"):
+    kernel_actions = [a for a in kernel_actions
+                      if not (a.op is OptOps.SPLIT and isinstance(a.arg, tuple) and len(a.arg) > 1
+                              and a.arg[1] is AxisType.GROUP_REDUCE)]
 
   for i,a in enumerate(kernel_actions):
     if a.axis is not None and a.op is not OptOps.TC:
       try: ax = s.real_axis(a.op, a.axis)
       except KernelOptError: continue
-      if (ax >= s.shape_len) or (s.full_shape[ax] == a.arg and Opt(a.op, a.axis, 0) in kernel_actions): continue
+      if (ax >= s.shape_len) or (a.op is OptOps.SPLIT and isinstance(arg:=a.arg, tuple) and s.full_shape[ax] == arg[0]
+                                 and replace(a, arg=(0,)+arg[1:]) in kernel_actions): continue
     s2 = s.copy()
     try:
       s2.apply_opt(a)

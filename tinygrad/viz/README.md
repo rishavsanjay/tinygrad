@@ -91,3 +91,24 @@ Get bank conflicts:
 ```bash
 python -m tinygrad.viz.cli -s "gemm PMC" | rg -A 16 SQC_LDS_BANK_CONFLICT
 ```
+
+# PMC profiling (DEV=QCOM, Adreno A8xx only)
+
+Per-kernel hardware counters are captured inline with each dispatch (begin/end
+`CP_REG_TO_MEM` snapshots around `CP_EXEC_CS` in the same submission) and joined
+with the GPU timestamp timeline in viz as `QCOM {kernel}` counter views plus an
+`All Counters` aggregate. Each record carries raw counter deltas, derived metrics
+(SP ALU utilization, stall fractions, MAD full/half share, ICL1 miss rate, VBIF
+bytes), launch geometry, and IR3 resource metadata (register footprints, shared
+memory, instruction length).
+
+```bash
+# on the A830 phone (needs KGSL perfcounter access, validated on stock SM8750)
+LIBC_PATH=/system/lib64/libc.so DEV=QCOM PROFILE=1 QCOM_PMC=1 python3 my_kernel.py
+python -m tinygrad.viz.cli -s "E_512_32_4 PMC"
+```
+
+`VIZ=2` enables `QCOM_PMC` automatically (same convention as AMD). Snapshot WFI
+stalls are part of the measured kernel durations. True wave-level instruction
+tracing (SQTT-class) is not exposed by the stock KGSL UAPI and is intentionally
+out of scope.

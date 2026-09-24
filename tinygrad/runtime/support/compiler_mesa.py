@@ -1,15 +1,11 @@
-import base64, ctypes, pathlib, tempfile, hashlib
+import base64, ctypes, pathlib, tempfile, hashlib, functools, json
 from tinygrad.device import Compiler
 from tinygrad.helpers import cpu_objdump, system, data64
 from tinygrad.runtime.autogen import mesa, llvm, libc
 from tinygrad.runtime.support.compiler_llvm import CPULLVMCompiler, expect, cerr
+from tinygrad.runtime.support.ir3 import IR3Shader
 
 # NB: compilers assume mesa's glsl type cache is managed externally with mesa.glsl_type_singleton_init_or_ref() and mesa.glsl_type_singleton_decref()
-
-def rzalloc(typ, ctx=None, **kwargs):
-  s = ctypes.cast(mesa.rzalloc_size(ctypes.cast(ctx, ctypes.c_void_p), ctypes.sizeof(typ)), ctypes.POINTER(typ))
-  for k,v in kwargs.items(): setattr(s.contents, k, v)
-  return s
 
 def deserialize(enc_src, opts):
   blobreader = mesa.struct_blob_reader()
@@ -93,41 +89,54 @@ def disas_adreno(lib:bytes, gpu_id=630):
     tf.seek(0)
     print(tf.read())
 
+@functools.cache
+def ir3_build_identity() -> str:
+  # Hash the loaded library and bindings, not MESA_PATH's spelling or an assumed package version.
+  return hashlib.sha256(pathlib.Path(mesa.dll._name).read_bytes() + pathlib.Path(mesa.__file__).read_bytes()).hexdigest()
+
 class IR3Compiler(Compiler):
   def __init__(self, arch):
-    assert arch.split(',')[0] == "a630", "only a630 supported, for now"
-    self.arch, self.dev_id = arch, mesa.struct_fd_dev_id(630, 0x6030001)
-    self.cc = mesa.ir3_compiler_create(None, self.dev_id, mesa.fd_dev_info(self.dev_id),
-                                       mesa.struct_ir3_compiler_options(disable_cache=True)).contents
-    self.cc.has_preamble = False
+    self.arch = arch
+    arch_name, *opts = arch.split(',')
+    gpu_id = int(arch_name[1:])
+    chip_id = 0x06030001 if gpu_id == 630 else int(next(x.split('=', 1)[1] for x in opts if x.startswith('chip_id=')), 0)
+    self.dev_id = mesa.struct_fd_dev_id(gpu_id, chip_id)
+    dev_info = mesa.fd_dev_info_raw(self.dev_id)
+    if not dev_info or dev_info.contents.chip == 0:
+      raise RuntimeError(f"unsupported Adreno chip_id={chip_id:#x} for {arch_name!r}")
+    self.cc = mesa.ir3_compiler_create(None, self.dev_id, dev_info, mesa.struct_ir3_compiler_options(disable_cache=True))
+    self.cc.contents.has_preamble = False
     self.nir_options = bytes(mesa.ir3_get_compiler_options(self.cc).contents)
-    super().__init__(f"compile_ir3_{arch}")
+    self.build = ir3_build_identity()
+    super().__init__(f"compile_ir3_v1_{self.build}_{arch}")
 
-  def __del__(self): mesa.ir3_compiler_destroy(self.cc)
+  def __del__(self):
+    if getattr(self, 'cc', None): mesa.ir3_compiler_destroy(self.cc)
 
   def __reduce__(self): return IR3Compiler, (self.arch,)
 
-  # ir3_shader_variant info: https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_shader.c#L1099
   def compile(self, src) -> bytes:
-    nir_shader = deserialize(src, self.nir_options)
+    source = json.loads(src)
+    nir_shader = deserialize(source['nir'], self.nir_options)
     mesa.ir3_nir_lower_io_vars_to_temporaries(nir_shader)
     mesa.ir3_finalize_nir(self.cc, mesa.struct_ir3_shader_nir_options(), nir_shader)
-    shader = rzalloc(mesa.struct_ir3_shader, compiler=ctypes.pointer(self.cc), type=mesa.MESA_SHADER_COMPUTE, nir=nir_shader).contents
-    mesa.ir3_nir_post_finalize(shader)
-    v = rzalloc(mesa.struct_ir3_shader_variant, type=shader.type, compiler=ctypes.pointer(self.cc), key=mesa.struct_ir3_shader_key()).contents
-    v.const_state, shader.variants, shader.variant_count = rzalloc(mesa.struct_ir3_const_state, ctypes.pointer(v)), ctypes.pointer(v), 1
-    v.num_uavs = (info:=nir_shader.contents.info).num_ssbos + info.num_images
-    assert not mesa.ir3_compile_shader_nir(self.cc, shader, v), "compilation failed"
-    lib = ctypes.cast(mesa.ir3_shader_assemble(v), ctypes.POINTER(ctypes.c_uint32))
-    # NB: bytes(v) means the pointers in v are no longer safe! a custom __reduce__ that supports pointers for c.Struct would make this simpler
-    ret = bytes(v) + bytes(v.const_state.contents) + ctypes.string_at(v.imm_state.values, v.imm_state.count * 4) + ctypes.string_at(lib, v.info.size)
-    mesa.ralloc_free(ctypes.pointer(v))
-    return ret
+    ir3_shader = mesa.ir3_shader_from_nir(self.cc, nir_shader, ctypes.pointer(mesa.struct_ir3_shader_options()))
+    null_upload = ctypes.CFUNCTYPE(None, ctypes.POINTER(mesa.struct_ir3_shader_variant), ctypes.c_void_p)()
+    try:
+      variant = mesa.ir3_shader_get_variant(ir3_shader, ctypes.pointer(mesa.struct_ir3_shader_key()), False, False, null_upload, None)
+      if not variant: raise RuntimeError(f"IR3 compilation failed for {self.arch!r}")
+      v, cs = variant.contents, variant.contents.const_state.contents
+      alloc = cs.allocs.consts[mesa.IR3_CONST_ALLOC_DRIVER_PARAMS]
+      shader = IR3Shader(self.arch, self.build, v.branchstack, v.pvtmem_size, v.shared_size, v.pvtmem_per_wave,
+        v.early_preamble, v.mergedregs, v.instrlen, v.info.double_threadsize, v.constlen,
+        alloc.offset_vec4 * 4 + 8 if alloc.size_vec4 else 0xfc, v.cs.work_group_id, v.cs.local_invocation_id,
+        cs.ubo_state.range[0].offset, cs.allocs.max_const_offset_vec4 * 16, v.num_uavs,
+        tuple(v.image_mapping.tex_to_image[:v.image_mapping.num_tex]), v.info.max_reg + 1, v.info.max_half_reg + 1,
+        v.cs.round_robin_mode, tuple(tuple(p) for p in source['params']), tuple(source['writes']))
+      return shader.pack(ctypes.string_at(v.imm_state.values, v.imm_state.count * 4), ctypes.string_at(v.bin, v.info.size))
+    finally: mesa.ir3_shader_destroy(ir3_shader)
 
   @staticmethod
-  def unpack_lib(lib: bytes) -> tuple[mesa.struct_ir3_shader_variant, mesa.struct_ir3_const_state, bytes, bytes]:
-    shifted = lib[ctypes.sizeof(v:=mesa.struct_ir3_shader_variant.from_buffer_copy(lib)):]
-    shifted = shifted[ctypes.sizeof(cs:=mesa.struct_ir3_const_state.from_buffer_copy(shifted)):]
-    return v, cs, shifted[:v.imm_state.count * 4], shifted[v.imm_state.count * 4:]
+  def unpack_lib(lib: bytes) -> tuple[IR3Shader, bytes, bytes]: return IR3Shader.unpack(lib)
 
-  def disassemble(self, lib: bytes): disas_adreno(self.unpack_lib(lib)[3], self.dev_id.gpu_id)
+  def disassemble(self, lib: bytes): disas_adreno(self.unpack_lib(lib)[2], self.dev_id.gpu_id)

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import multiprocessing, pickle, difflib, os, threading, json, time, sys, webbrowser, socket, argparse, codecs, io, struct, re, traceback, itertools
-import socketserver
+import multiprocessing, pickle, difflib, os, threading, json, time, sys, socket, argparse, codecs, io, struct, re, traceback, itertools, socketserver
 from contextlib import redirect_stdout, redirect_stderr, contextmanager
 from decimal import Decimal
 from dataclasses import dataclass, field
@@ -163,9 +162,11 @@ def uop_to_json(data:VizData, x:UOp) -> dict[int, dict]:
     # limit SOURCE labels line count
     if u.op is Ops.SOURCE and len(lines:=label.split("\n")) > 40:
       label = "\n".join(lines[:30]) + "\n..."
+    if u.is_unbound: label += "\nUNBOUND"
     addrspace_color:str|None = None
     with soft_err(): addrspace_color = addrspace_colors.get(u.addrspace, None) if u.addrspace is not None else None
-    graph[id(u)] = {"label":label, "src":[(i,id(x)) for i,x in enumerate(u.src)], "exclude":u in excluded, "color":uops_colors.get(u.op, "#ffffff"),
+    color = "#C07788" if u.is_unbound else uops_colors.get(u.op, "#ffffff")
+    graph[id(u)] = {"label":label, "src":[(i,id(x)) for i,x in enumerate(u.src)], "exclude":u in excluded, "color":color,
                     "ref":ref, "tag":repr(u.tag) if u.tag is not None else None, "addrspace":addrspace_color}
   return graph
 
@@ -300,9 +301,40 @@ def row_tuple(row:str) -> tuple[tuple[int, int], ...]:
 
 # *** Performance counters
 
+def _qcom_mad_total(s:dict[str, tuple[int, int, int]]) -> int:
+  return (s['SP_FULL_ALU_MAD_INSTRUCTIONS'][0] + s['SP_HALF_ALU_MAD_INSTRUCTIONS'][0] +
+          s['SP_FULL_ALU_MUL_INSTRUCTIONS'][0] + s['SP_FULL_ALU_ADD_INSTRUCTIONS'][0])
+
+def _qcom_vbif_beats(s:dict[str, tuple[int, int, int]]) -> int:
+  return (s['UCHE_VBIF_READ_BEATS_CH0'][0] + s['UCHE_VBIF_READ_BEATS_CH1'][0] +
+          s['UCHE_VBIF_WRITE_BEATS_CH0'][0] + s['UCHE_VBIF_WRITE_BEATS_CH1'][0])
+
 metrics:dict[str, Callable[[dict[str, tuple[int, int, int]]], str]] = {
   "VALU utilization": lambda s: f"{100 * (s['SQ_INSTS_VALU'][0] / s['SQ_INSTS_VALU'][2]) / (s['GRBM_GUI_ACTIVE'][1] * 4):.1f}%",
   "SALU utilization": lambda s: f"{100 * (s['SQ_INSTS_SALU'][0] / s['SQ_INSTS_SALU'][2]) / (s['GRBM_GUI_ACTIVE'][1] * 4):.1f}%",
+  # A830 gen8 counters (per-quad MAD/MUL/ADD, VBIF beats are 32B). Missing counters raise KeyError and are skipped.
+  "SP ALU utilization": lambda s: f"{100 * s['SP_ALU_WORKING_CYCLES'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP stall TP": lambda s: f"{100 * s['SP_STALL_CYCLES_TP'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP stall UCHE": lambda s: f"{100 * s['SP_STALL_CYCLES_UCHE'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP stall RB": lambda s: f"{100 * s['SP_STALL_CYCLES_RB'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP stall VPC": lambda s: f"{100 * s['SP_STALL_CYCLES_VPC_BE'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP starve HLSQ": lambda s: f"{100 * s['SP_STARVE_CYCLES_HLSQ'][0] / s['SP_BUSY_CYCLES'][0]:.1f}%",
+  "SP GPR conflicts": lambda s: f"{s['SP_GPR_READ_CONFLICT'][0] + s['SP_GPR_WRITE_CONFLICT'][0]:,}",
+  "GM latency/sample": lambda s: f"{s['SP_GM_LOAD_LATENCY_CYCLES'][0] / s['SP_GM_LOAD_LATENCY_SAMPLES'][0]:.1f}cyc",
+  # CP ALWAYS_COUNT ticks at the core clock, AO at 19.2 MHz: no-root GPU clock (see qcom_profile.AO_HZ).
+  "GPU clock": lambda s: f"{s['CP_ALWAYS_COUNT'][0] / s['ALWAYS_ON_CYCLES'][0] * 19.2:.0f}MHz",
+  "CP busy": lambda s: f"{100 * s['CP_BUSY_CYCLES'][0] / s['CP_ALWAYS_COUNT'][0]:.1f}%",
+  "RBBM busy": lambda s: f"{100 * s['RBBM_STATUS_MASKED'][0] / s['CP_ALWAYS_COUNT'][0]:.1f}%",
+  "UCHE arb stall": lambda s: f"{100 * s['UCHE_STALL_CYCLES_ARBITER'][0] / s['UCHE_BUSY_CYCLES'][0]:.1f}%",
+  "VBIF latency/sample": lambda s: f"{s['UCHE_VBIF_LATENCY_CYCLES'][0] / s['UCHE_VBIF_LATENCY_SAMPLES'][0]:.1f}cyc",
+  "TP busy": lambda s: f"{100 * s['TP_BUSY_CYCLES'][0] / s['CP_BUSY_CYCLES'][0]:.1f}% of CP",
+  "TP stall UCHE": lambda s: f"{100 * s['TP_STALL_CYCLES_UCHE'][0] / s['TP_BUSY_CYCLES'][0]:.1f}%",
+  "TP L1 misses": lambda s: f"{s['TP_L1_CACHELINE_MISSES'][0]:,}",
+  "Preemptions": lambda s: f"{s['CP_NUM_PREEMPTIONS'][0]}",
+  "MAD full share": lambda s: f"{100 * s['SP_FULL_ALU_MAD_INSTRUCTIONS'][0] / _qcom_mad_total(s):.1f}%",
+  "MAD half share": lambda s: f"{100 * s['SP_HALF_ALU_MAD_INSTRUCTIONS'][0] / _qcom_mad_total(s):.1f}%",
+  "ICL1 miss rate": lambda s: f"{100 * s['SP_ICL1_MISSES'][0] / s['SP_ICL1_REQUESTS'][0]:.2f}%",
+  "VBIF bytes": lambda s: f"{32 * _qcom_vbif_beats(s):,}",
 }
 
 def unpack_pmc(e) -> dict:
@@ -327,7 +359,9 @@ def unpack_pmc(e) -> dict:
     rows.append(row)
   for name, fn in metrics.items():
     try: rows.append([name, fn(stats)])
-    except KeyError: pass
+    except (KeyError, ZeroDivisionError): pass
+  if isinstance(getattr(e, "info", None), dict):
+    rows.extend([[f"info:{k}", str(v)] for k, v in e.info.items()])
   return {"rows":rows, "cols":agg_cols}
 
 # ** on startup, list all the performance counter traces
@@ -359,12 +393,29 @@ def load_amd_counters(data:VizData, profile:list) -> None:
     if (sqtt:=v.get("ProfileSQTTEvent")):
       for e in sqtt:
         if e.itrace: steps.append(create_step(f"SE:{e.se} PKTS", (f"/sqtt-{e.se}",len(data.ctxs),len(steps)), data=(e.blob,prg_events[k].lib,arch)))
-      try:
-        with Context(DEBUG=0): from extra.sqtt.roc import unpack_occ
-        steps.append(create_step("OCC", ("/amd-sqtt-occ", len(data.ctxs), len(steps)),
-                                 data={"fxn":unpack_occ, "args":((k, tag), sqtt, prg_events[k], arch)}))
-      except Exception: pass
     data.ctxs.append({"name":f"SQTT {name}"+(f" n{run_number[k]}" if run_number[k] > 1 else ""), "steps":steps})
+
+def load_qcom_counters(data:VizData, profile:list) -> None:
+  # Per-kernel A830 PMC records (QCOMProfilePMCEvent): one counter record per kernel invocation,
+  # joined with the generic GPU timestamp timeline. Mirrors load_amd_counters without SQTT packet decoding.
+  counter_events:dict[tuple[int, int], list] = {}
+  durations:dict[str, list[float]] = {}
+  prg_events:dict[int, ProfileProgramEvent] = {}
+  for e in profile:
+    if type(e).__name__ == "QCOMProfilePMCEvent":
+      counter_events.setdefault((e.kern, e.exec_tag), []).append(e)
+    if isinstance(e, ProfileRangeEvent) and e.device.startswith("QCOM") and e.en is not None:
+      durations.setdefault(str(e.name), []).append(float(e.en-e.st))
+    if isinstance(e, ProfileProgramEvent) and e.device.startswith("QCOM") and e.tag is not None: prg_events[e.tag] = e
+  if len(counter_events) == 0: return None
+  data.ctxs.append({"name":"All Counters", "steps":[create_step("PMC", ("/all-pmc", len(data.ctxs), 0), (durations, all_counters:={}))]})
+  run_number = {n:0 for n,_ in counter_events}
+  for (k, tag),v in counter_events.items():
+    name = data.ctxs[r]["ki"].name if (r:=data.ref_map.get(pname:=prg_events[k].name)) is not None else pname
+    run_number[k] += 1
+    for e in v: all_counters[(f"QCOM {name}", run_number[k], pname)] = e
+    data.ctxs.append({"name":f"QCOM {name}"+(f" n{run_number[k]}" if run_number[k] > 1 else ""), "steps":[
+      create_step("PMC", ("/prg-pmc", len(data.ctxs), 0), v[0])]})
 
 wave_colors = {"WMMA": "#1F7857", **{x:"#ffffc0" for x in ["VALU", "VINTERP"]}, "SALU": "#cef263", "SMEM": "#ffc0c0", "STORE": "#4fa3cc",
                **{x:"#b2b7c9" for x in ["VMEM", "SGMEM"]}, "LDS": "#9fb4a6", "IMMEDIATE": "#f3b44a", "BARRIER": "#d00000",
@@ -373,7 +424,7 @@ wave_colors = {"WMMA": "#1F7857", **{x:"#ffffc0" for x in ["VALU", "VINTERP"]}, 
 def sqtt_timeline(data:bytes, lib:bytes, target:str) -> Generator[ProfileEvent, None, None]:
   from tinygrad.renderer.amd.sqtt import (map_insts, InstructionInfo, PacketType, INST, InstOp, VALUINST, IMMEDIATE, IMMEDIATE_MASK, VMEMEXEC,
                                           ALUEXEC, INST_RDNA4, InstOpRDNA4, TS_DELTA_OR_MARK, TS_DELTA_OR_MARK_RDNA4, CDNA_INST, InstOpCDNA,
-                                          WAVEEND, WAVEEND_RDNA4, CDNA_WAVEEND, WAVERDY)
+                                          CDNA_ISSUE, WAVEEND, WAVEEND_RDNA4, CDNA_WAVEEND, WAVERDY)
   pc_map = {addr:str(inst) for addr,inst in amd_decode(lib, target).items()}
   row_ends:dict[str, Decimal] = {}
   row_counts:dict[str, itertools.count] = {}
@@ -383,8 +434,9 @@ def sqtt_timeline(data:bytes, lib:bytes, target:str) -> Generator[ProfileEvent, 
                       "SGMEM":"VMEM", "FLAT":"VMEM", "LDS":"LDS", "SALU":"SALU", "SMEM":"SALU", "VMEM":"VMEM"}
   def add(name:str, p:PacketType, wave:int|None=None, info:InstructionInfo|None=None) -> Generator[ProfileEvent, None, None]:
     row = f"WAVE:{wave}" if (wave:=getattr(p, "wave", wave)) is not None else f"{p.__class__.__name__}:0 {name.replace('_ALT', '')}"
-    # by default we extend the packet to one cycle after timestamp
-    start_time, end_time = p._time, p._time+1
+    if (simd:=getattr(p, "simd", None)) is not None: row += f" SIMD:{simd}"
+    # extend packets to the architectural instruction issue interval
+    start_time, end_time = p._time, p._time+(4 if target.startswith("gfx9") else 1)
     # exec links to dispatch, dispatch links to PC
     link:dict|None = {"pc":info.pc} if info else None
     if isinstance(p, (ALUEXEC, VMEMEXEC)):
@@ -432,7 +484,7 @@ def sqtt_timeline(data:bytes, lib:bytes, target:str) -> Generator[ProfileEvent, 
       name = p.op.name if isinstance(p.op, (InstOp, InstOpRDNA4, InstOpCDNA)) else f"0x{p.op:02x}"
       yield from add(name, p, info=info)
     if isinstance(p, (VALUINST, IMMEDIATE, WAVEEND, WAVEEND_RDNA4, CDNA_WAVEEND)): yield from add(p.__class__.__name__, p, info=info)
-    if isinstance(p, IMMEDIATE_MASK): yield from add("IMMEDIATE", p, wave=unwrap(info).wave, info=info)
+    if isinstance(p, (IMMEDIATE_MASK, CDNA_ISSUE)): yield from add("IMMEDIATE", p, wave=unwrap(info).wave, info=info)
     if isinstance(p, WAVERDY):
       for wave in range(16):
         if p.mask & (1 << wave):
@@ -460,6 +512,7 @@ def get_profile(data:VizData, profile:list[ProfileEvent], sort_fn:Callable[[str]
     if isinstance(ev, ProfileDeviceEvent):
       device_ts_diffs[ev.device] = ev.tdiff
       if (d:=ev.device.split(":")[0]) == "AMD": device_decoders[d] = load_amd_counters
+      if d == "QCOM": device_decoders[d] = load_qcom_counters
       if d == "NV": device_decoders[d] = load_nv_counters
   # load device specific counters
   for fxn in device_decoders.values(): fxn(data, profile)
@@ -470,11 +523,12 @@ def get_profile(data:VizData, profile:list[ProfileEvent], sort_fn:Callable[[str]
   start_ts:int|None = None
   end_ts:int|None = None
   for ts,en,e in flatten_events(profile, device_ts_diffs):
-    dev_events.setdefault(e.device,[]).append((st:=int(ts), et:=int(en), float(en-ts), e))
-    if start_ts is None or st < start_ts: start_ts = st
-    if end_ts is None or et > end_ts: end_ts = et
-    if isinstance(e, ProfilePointEvent) and e.name == "marker": markers.append(e)
     if isinstance(e, ProfilePointEvent) and e.name == "JSON": ext_data[e.key] = e.arg
+    else:
+      dev_events.setdefault(e.device,[]).append((st:=int(ts), et:=int(en), float(en-ts), e))
+      if start_ts is None or st < start_ts: start_ts = st
+      if end_ts is None or et > end_ts: end_ts = et
+      if isinstance(e, ProfilePointEvent) and e.name == "marker": markers.append(e)
   if start_ts is None: return None
   # return layout of per device events
   layout:dict[str, bytes|None] = {}
@@ -650,9 +704,6 @@ def get_render(viz_data:VizData, query:str, **kwargs) -> dict:
         ret = {"value":events, "content_type":"application/octet-stream"}
       else: ret = {"src":"No SQTT trace on this SE."}
     return ret
-  # viewers for the amd decoder in extra
-  if fmt.startswith("amd-sqtt"): return data["fxn"](viz_data, i, j, *data["args"])
-  if fmt == "cu-sqtt": return {"value":get_profile(viz_data, data, sort_fn=row_tuple), "content_type":"application/octet-stream"}
   if fmt == "prg-pma-pkts":
     ret = {}
     with soft_err(lambda err:ret.update(err)):
@@ -733,7 +784,6 @@ if __name__ == "__main__":
   reloader_thread = threading.Thread(target=reloader)
   reloader_thread.start()
   print(colored(f"*** ready in {(time.perf_counter()-st)*1e3:4.2f}ms", "green"), flush=True)
-  if len(getenv("BROWSER", "")) > 0: webbrowser.open(f"{HOST}:{PORT}")
   try: server.serve_forever()
   except KeyboardInterrupt:
     print("*** viz is shutting down...")

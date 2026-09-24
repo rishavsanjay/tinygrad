@@ -4,7 +4,7 @@ from dataclasses import replace
 from tinygrad.dtype import dtypes, AddrSpace, Invalid, DType
 from tinygrad.uop.ops import UOp, Ops, PatternMatcher, UPat, GroupOp, graph_rewrite
 from tinygrad.uop.symbolic import uop_given_valid, parse_valid, invalid_gate, sym
-from tinygrad.helpers import getenv, IMAGE, OSX, ceildiv, is_image_shape
+from tinygrad.helpers import getenv, IMAGE, OSX, ceildiv, is_image_shape, round_up
 from tinygrad.renderer import Renderer
 
 # ***** image load valid simplification *****
@@ -44,6 +44,7 @@ def simplify_valid_load(buf:UOp, start_idx:UOp, valid:UOp) -> UOp|None:
 
 def simplify_valid_image_load(buf:UOp, idx_y:UOp, idx_x:UOp, valid:UOp) -> UOp|None:
   if not is_image_shape(buf._shape): return None
+  if getenv("QCOM_IMAGE_KEEP_GATES", 0): return None
   if idx_x.dtype != idx_y.dtype: idx_x, idx_y = idx_x.cast(dtypes.int), idx_y.cast(dtypes.int)
   start_idx = idx_x.stack(idx_y)
   idx = uop_given_valid(valid, start_idx)
@@ -64,15 +65,20 @@ indexing_simplify = PatternMatcher([
 
 # get list of (height, width) that do not require pitch padding
 def image_valid_dims(base:DType, size:int, arch:str) -> list[tuple[int,int]]:
-  if (ALIGN:=next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("IMAGE_PITCH_ALIGNMENT=")), 0)) == 0: return []
+  qcom_align = next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("QCOM_IMAGE_PITCH_ALIGNMENT=")), 0)
+  if (ALIGN:=qcom_align or next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("IMAGE_PITCH_ALIGNMENT=")), 0)) == 0: return []
   MAXW, pxls = 16384, size // 4
-  if base not in (dtypes.half, dtypes.float) or size > 4*MAXW*MAXW: return []
+  if base not in (dtypes.half, dtypes.float) or size > 4*MAXW*MAXW or (qcom_align and size % 4): return []
   # height=1 images just need to abide by alignment requirements in bytes, not pixels!
-  if size % (ALIGN * 4) != 0: return [] if (base.itemsize * size) % (64 if OSX else ALIGN) != 0 or pxls > MAXW else [(1, pxls)]
-  return [(pxls//ALIGN//k, ALIGN*k) for k in range(ceildiv(pxls//ALIGN, MAXW), min(pxls//ALIGN, MAXW//ALIGN)+1) if (pxls//ALIGN)%k == 0]
+  if size % (ALIGN * 4) != 0: dims = [] if (base.itemsize * size) % (64 if OSX else ALIGN) != 0 or pxls > MAXW else [(1, pxls)]
+  else: dims = [(pxls//ALIGN//k, ALIGN*k) for k in range(ceildiv(pxls//ALIGN, MAXW), min(pxls//ALIGN, MAXW//ALIGN)+1) if (pxls//ALIGN)%k == 0]
+  if qcom_align:
+    alloc_size = round_up(size * base.itemsize, 0x1000)
+    dims = [(h,w) for h,w in dims if w % ALIGN == 0 and w * 4 * base.itemsize * round_up(h, 4) <= alloc_size]
+  return dims
 
 def transform_to_image(ctx, buf:UOp, x:UOp) -> UOp|None:
-  shapes, ren = ctx
+  shapes, ren, _image_slots = ctx
   if not IMAGE or ren.target.device not in {"QCOM", "CL", "PYTHON", "NULL"}: return None
   valid, x = x.get_valid(), x.get_idx()
   # search for dims that drop the most valid statements
@@ -99,6 +105,16 @@ pm_simplify_add_image = PatternMatcher([
   # image load/store is always float
   (UPat(Ops.INDEX, dtype=dtypes.float, name="x").store(UPat(name="d", dtype=dtypes.half)), lambda x,d: x.store(d.cast(dtypes.float))),
   (UPat.var("x", dtype=dtypes.float).cast(dtypes.half).cast(dtypes.float), lambda x: x),
+  (UPat(Ops.WHERE, src=(UPat(name="c"), UPat(name="a", dtype=dtypes.float), UPat(name="b", dtype=dtypes.half))),
+   lambda c,a,b: c.where(a, b.cast(dtypes.float))),
+  (UPat(Ops.WHERE, src=(UPat(name="c"), UPat(name="a", dtype=dtypes.half), UPat(name="b", dtype=dtypes.float))),
+   lambda c,a,b: c.where(a.cast(dtypes.float), b)),
+  (UPat(GroupOp.Binary, src=(UPat(name="a", dtype=dtypes.float), UPat(name="b", dtype=dtypes.half)), name="u"),
+   lambda u,a,b: u.replace(src=(a, b.cast(dtypes.float)))),
+  (UPat(GroupOp.Binary, src=(UPat(name="a", dtype=dtypes.half), UPat(name="b", dtype=dtypes.float)), name="u"),
+   lambda u,a,b: u.replace(src=(a.cast(dtypes.float), b))),
+  (UPat((Ops.INDEX, Ops.SHRINK), dtype=dtypes.half, name="x").store(UPat(name="d", dtype=dtypes.float)),
+   lambda x,d: x.store(d.cast(dtypes.half))),
 ])
 
 def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
@@ -113,6 +129,7 @@ def memory_coalescing(sink:UOp, ctx:Renderer) -> UOp:
       assert u.src[0].op is Ops.INDEX, f"memory coalescing should be on INDEX, not {u.src[0].op}"
       buf, idx_u = u.src[0].src
       if buf.addrspace == AddrSpace.REG: continue
+      if buf.op is Ops.PARAM and buf.arg.volatile: continue # volatile accesses never merge
       idx, valid = idx_u.get_idx(), idx_u.get_valid()
       root_src: UOp|str
       if idx.op is Ops.ADD and idx.src[1].op is Ops.CONST: root_src, arg = idx.src[0], idx.src[1].val

@@ -1,6 +1,7 @@
 from typing import Callable, Any
+import json
 from tinygrad.dtype import AddrSpace, DType, dtypes, truncate
-from tinygrad.helpers import DEBUG, OSX, unwrap, fromimport, Target, is_image_shape, round_up
+from tinygrad.helpers import DEBUG, OSX, unwrap, fromimport, Target, getenv, is_image_shape, round_up
 from tinygrad.renderer import Renderer, with_storage
 from tinygrad.renderer.cstyle import CUDARenderer
 from tinygrad.uop.ops import GroupOp, Ops, UOp, PatternMatcher, UPat, range_str
@@ -58,7 +59,8 @@ def nir_instr(nc=1, bs=lambda: None, intrins=None, srcs=None, has_def=True, df=N
     return wrapper
   return dec
 
-@nir_instr(nc=1, bs=lambda src: src.bit_size, exact=lambda b:b.exact, fp_fast_math=lambda b:b.fp_fast_math)
+# Mesa 26.1.4 replaced exact/fp_fast_math with fp_math_ctrl
+@nir_instr(nc=1, bs=lambda src: src.bit_size, fp_math_ctrl=lambda b:b.fp_math_ctrl)
 def nchannel(b:mesa.nir_builder, src:mesa.nir_def, c:int):
   alu_src = mesa.nir_alu_src(src=nsrc(src))
   alu_src.swizzle[0] = c
@@ -66,14 +68,17 @@ def nchannel(b:mesa.nir_builder, src:mesa.nir_def, c:int):
   ctypes.cast(mov.contents.src, ctypes.POINTER(mesa.nir_alu_src))[0] = alu_src
   return mov
 
-def nimm_set(imm:mesa.nir_def, x, dtype:DType):
-  instr = ctypes.cast(imm.parent_instr, ctypes.POINTER(mesa.nir_load_const_instr))
-  struct.pack_into(unwrap(dtype.fmt), (ctypes.c_ubyte * dtype.itemsize).from_address(ctypes.addressof(instr.contents.value)), 0, truncate[dtype](x))
+# Mesa 26.1.4 removed nir_def.parent_instr
+def nimm_set(instr:POINTER[mesa.nir_load_const_instr], x, dtype:DType):
+  value = (ctypes.c_ubyte * dtype.itemsize).from_address(ctypes.addressof(instr.contents.value))
+  struct.pack_into(unwrap(dtype.fmt), value, 0, truncate[dtype](x))
 
-@nir_instr(nc=1, bs=lambda dtype: dtype.bitsize)
-def nimm(b:mesa.nir_builder, x, dtype:DType) -> mesa.nir_def:
-  nimm_set((instr:=mesa.nir_load_const_instr_create(b.shader, 1, dtype.bitsize)).contents._def, x, dtype)
+def nimm_instr(b:mesa.nir_builder, x, dtype:DType) -> POINTER[mesa.nir_load_const_instr]:
+  instr = mesa.nir_load_const_instr_create(b.shader, 1, dtype.bitsize)
+  nimm_set(instr, x, dtype)
+  mesa.nir_builder_instr_insert(b, instr.contents.instr)
   return instr
+def nimm(b:mesa.nir_builder, x, dtype:DType) -> mesa.nir_def: return nimm_instr(b, x, dtype).contents._def
 @nir_instr(nc=1, bs=lambda dtype: dtype.bitsize)
 def nundef(b, dtype): return mesa.nir_undef_instr_create(b.shader, 1, dtype.bitsize)
 
@@ -92,8 +97,6 @@ nload = nir_instr(nc=lambda u:u.max_numel(), bs=lambda u:u.dtype.bitsize, num_co
 
 ngid = nir_instr(nc=3, bs=32)(lambda b: mesa.nir_intrinsic_instr_create(b.shader, mesa.nir_intrinsic_load_workgroup_id))
 nlid = nir_instr(nc=3, bs=32)(lambda b: mesa.nir_intrinsic_instr_create(b.shader, mesa.nir_intrinsic_load_local_invocation_id))
-ngsz = nir_instr(nc=3, bs=32)(lambda b: mesa.nir_intrinsic_instr_create(b.shader, mesa.nir_intrinsic_load_workgroup_size))
-def nid(b): return nalu(b, "iadd", nalu(b, "imul", ngid(b), ngsz(b)), nlid(b))
 
 nbarrier = nir_instr(has_def=False, intrins={"EXECUTION_SCOPE":mesa.SCOPE_WORKGROUP})(
   lambda b: mesa.nir_intrinsic_instr_create(b.shader, mesa.nir_intrinsic_barrier))
@@ -136,8 +139,8 @@ class NIRRenderer(Renderer):
     (UPat(Ops.CAST, (dtypes.uchar, dtypes.ushort), src=(UPat.var("x", dtypes.floats),), name="c"), lambda x,c: x.cast(dtypes.int32).cast(c.dtype)),
     # load/store use pointer arithmetic, and the cast does nothing. NOTE: this doesn't apply to image indexing cause it's 1-D
     # nor to REG/ALU register picks, which keep their own index dtype
-    (UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"), UPat.var("off")), allow_any_len=True, name="x"), lambda x,buf,off: x.replace(
-      src=(buf,UOp.const(off.val, dtypes.long) if off.op is Ops.CONST else off.cast(dtypes.long))+x.src[2:])
+    (UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"), UPat.var("off")), allow_any_len=True, name="x"),
+     lambda x,buf,off: x.replace(src=(buf,off.ccast(dtypes.long))+x.src[2:])
       if buf.addrspace in (AddrSpace.GLOBAL, AddrSpace.LOCAL) and not is_image_shape(buf._shape) else None),
     # images need index to be int for nir (coordinates only: the INDEX keeps its access dtype)
     (UPat.var("buf").index(UPat.var("idx_y"), UPat.var("idx_x"), name="x"),
@@ -147,7 +150,7 @@ class NIRRenderer(Renderer):
   def_rewrite = PatternMatcher([
     (UPat.cvar("c").cast(name="x"), lambda ctx,x,c: nimm(ctx.b, c.val, x.dtype)),
     (UPat(Ops.PARAM, name="x"), lambda ctx,x: ctx.param(ctx.b, x, x.dtype.itemsize if x.addrspace is AddrSpace.ALU else 8)),
-    (UPat(Ops.SPECIAL, name="x"), lambda ctx,x: nchannel(ctx.b, {'g':ngid, 'l':nlid, 'i': nid}[x.arg[0]](ctx.b), int(x.arg[-1]))),
+    (UPat(Ops.SPECIAL, name="x"), lambda ctx,x: nchannel(ctx.b, {'g':ngid, 'l':nlid}[x.arg[0]](ctx.b), int(x.arg[-1]))),
     (UPat(Ops.STORE, src=(UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"),UPat.var("off")), allow_any_len=True), UPat.var("val"))),
      lambda ctx,buf,off,val: nstore(ctx.b, buf.addrspace, nidx(ctx.b, ctx.r[buf], ctx.r[off], buf.addrspace, buf.dtype.itemsize), ctx.r[val])),
     (UPat(Ops.LOAD, src=(UPat((Ops.INDEX, Ops.SHRINK), src=(UPat.var("buf"), UPat.var("off")), allow_any_len=True), UPat.var("alt"),
@@ -180,7 +183,9 @@ class NIRRenderer(Renderer):
 
   def param(self, b:mesa.nir_builder, x, sz:int) -> mesa.nir_def: raise NotImplementedError("needs param")
   def prerender(self, uops:list[UOp]):
-    self.b = mesa.nir_builder_init_simple_shader(mesa.MESA_SHADER_COMPUTE, mesa.nir_shader_compiler_options.from_buffer_copy(self.nir_options), None)
+    # nir_shader_create stores this pointer instead of copying it, so keep the ctypes backing alive until render finishes.
+    self._nir_options = mesa.nir_shader_compiler_options.from_buffer_copy(self.nir_options)
+    self.b = mesa.nir_builder_init_simple_shader(mesa.MESA_SHADER_COMPUTE, self._nir_options, None)
     self.b.shader.contents.info.workgroup_size_variable = any([u.op == Ops.SPECIAL and u.arg[0] == 'i' for u in uops])
   def postrender(self, uops:list[UOp]): pass
 
@@ -277,20 +282,48 @@ class LVPRenderer(NIRRenderer):
 
 def tovec(b, idx_y, idx_x): return nalu(b, "vec4", idx_x, idx_y, nundef(b, dtypes.int), nundef(b, dtypes.int))
 def nfloat(dtype): return mesa.nir_type_float16 if dtype == dtypes.half else mesa.nir_type_float32
+def _ir3_writable_images(uops:list[UOp]) -> set[UOp]:
+  return {u.src[0].src[0] for u in uops if u.op is Ops.STORE and u.src[0].op is Ops.INDEX and is_image_shape(u.src[0].src[0]._shape)}
 nstore_img = nir_instr(has_def=False, df=lambda img:img, num_components=lambda val:val.num_components,
   intrins=lambda dtype:{'IMAGE_DIM':mesa.GLSL_SAMPLER_DIM_2D, 'ACCESS':mesa.ACCESS_CAN_REORDER, 'SRC_TYPE':nfloat(dtype)},
   srcs=lambda b,img,idx_y,idx_x,val:[nsrc(x) for x in [img, tovec(b, idx_y, idx_x), nundef(b, dtypes.int), val, nimm(b, 0, dtypes.int)]])(
     lambda b,img,idx_y,idx_x,val,dtype:mesa.nir_intrinsic_instr_create(b.shader,g("nir_intrinsic_image_store")))
 
-_nload_img = nir_instr(intrins=lambda dtype:{'IMAGE_DIM':mesa.GLSL_SAMPLER_DIM_2D, 'ACCESS':mesa.ACCESS_CAN_REORDER, 'DEST_TYPE':nfloat(dtype)},
+_nload_img = nir_instr(intrins=lambda dtype,access:{'IMAGE_DIM':mesa.GLSL_SAMPLER_DIM_2D, 'ACCESS':access, 'DEST_TYPE':nfloat(dtype)},
   nc=4, bs=32, num_components=4,
   srcs=lambda b,img,idx_y,idx_x:[nsrc(x) for x in [img, tovec(b, idx_y, idx_x), nundef(b, dtypes.int), nimm(b, 0, dtypes.int)]])(
-      lambda b,img,idx_y,idx_x,dtype: mesa.nir_intrinsic_instr_create(b.shader, g("nir_intrinsic_image_load")))
+      lambda b,img,idx_y,idx_x,dtype,access: mesa.nir_intrinsic_instr_create(b.shader, g("nir_intrinsic_image_load")))
 
 class IR3Renderer(NIRRenderer):
+  def render(self, uops:list[UOp]):
+    params = [u for u in uops if u.op is Ops.PARAM]
+    buffers = sorted({u.arg.slot for u in params if u.addrspace != AddrSpace.ALU})
+    scalars = sorted({u.arg.slot for u in params if u.addrspace == AddrSpace.ALU})
+    layout, offset = [], 0
+    for u in params:
+      if is_image_shape(u._shape): continue
+      scalar = u.addrspace == AddrSpace.ALU
+      size = u.dtype.itemsize if scalar else 8
+      offset = round_up(offset, size)
+      slot = len(buffers) + scalars.index(u.arg.slot) if scalar else buffers.index(u.arg.slot)
+      layout.append((slot, offset, size))
+      offset += size
+    writes = {u.src[0].buf_uop.arg.slot for u in uops if u.op is Ops.STORE and u.src[0].buf_uop.op is Ops.PARAM}
+    return json.dumps({'params':layout, 'writes':sorted(buffers.index(s) for s in writes), 'nir':super().render(uops)}, separators=(',', ':'))
+
+  # Opt-in precision change for f16 GEMM: IR3 can contract the widened f32
+  # multiply/add into mad.f32, but this intentionally removes the f16 product
+  # rounding that occurs before the cast in the original graph.
+  extra_matcher = NIRRenderer.extra_matcher + PatternMatcher([
+    (UPat(Ops.CAST, dtypes.float, src=(UPat(Ops.MUL, dtypes.half, name="mul"),)),
+     lambda mul: mul.src[0].cast(dtypes.float) * mul.src[1].cast(dtypes.float) if getenv("QCOM_F16_MAD", 0) else None),
+  ])
+
   def nload_img(ctx,img,idx_y,idx_x):
-    ctx.texs.add(img)
-    return _nload_img(ctx.b, ctx.r[img], ctx.r[idx_y], ctx.r[idx_x], img.dtype)
+    # IR3 may use the texture cache only for read-only images. An image that is also written must use the coherent UAV load path.
+    access = 0 if img in ctx.writable_images else mesa.ACCESS_CAN_REORDER
+    if access: ctx.texs.add(img)
+    return _nload_img(ctx.b, ctx.r[img], ctx.r[idx_y], ctx.r[idx_x], img.dtype, access)
 
   def_rewrite = PatternMatcher([
     (UPat(Ops.STORE, src=(UPat.var('img').index(UPat.var('idx_y'), UPat.var('idx_x')), UPat.var("val")), allow_any_len=True),
@@ -303,24 +336,29 @@ class IR3Renderer(NIRRenderer):
   _param = LVPRenderer.param
   def _param_img(self, x):
     self.img_idx += 1
-    return nimm(self.b, self.img_idx - 1, dtypes.int)
+    self.img_consts[x] = nimm_instr(self.b, self.img_idx - 1, dtypes.int)
+    return self.img_consts[x].contents._def
 
   def param(self, b, x, sz): return self._param_img(x) if is_image_shape(x._shape) else self._param(b, x, sz)
 
   def prerender(self, uops:list[UOp]):
     super().prerender(uops)
     self.texs:set[UOp] = set()
+    self.writable_images = _ir3_writable_images(uops)
+    self.img_consts:dict[UOp, POINTER[mesa.nir_load_const_instr]] = {}
     self.img_idx = 0
     self.param_sz = functools.reduce(padded_idx, (u.element_size() if u.addrspace is AddrSpace.ALU else 8
                                                  for u in uops if u.op is Ops.PARAM and not is_image_shape(u._shape)), 0)
 
   def postrender(self, uops:list[UOp]):
     bufs = [u for u in uops if u.op is Ops.PARAM and u.addrspace is not AddrSpace.ALU]
-    texs, imgs = itertools.count().__next__, itertools.count().__next__
+    # Keep NIR image indices identical to image-parameter order. The runtime binds a complete UAV table in this order and
+    # uses IR3's tex_to_image mapping to build the compact sampled table, so arbitrary buffer/image parameter interleaving is safe.
+    imgs = itertools.count().__next__
     for b in filter(lambda b: is_image_shape(b._shape), bufs):
-      nimm_set(self.r[b], texs() if b in self.texs else imgs(), dtypes.int)
+      nimm_set(self.img_consts[b], imgs(), dtypes.int)
 
     self.b.shader.contents.info.num_ubos = len([u for u in bufs if not is_image_shape(u._shape)])
-    self.b.shader.contents.info.num_images = texs() + imgs()
+    self.b.shader.contents.info.num_images = imgs()
 
   def supported_dtypes(self): return {d for d in NIRRenderer.supported_dtypes(self) if d != dtypes.double}
