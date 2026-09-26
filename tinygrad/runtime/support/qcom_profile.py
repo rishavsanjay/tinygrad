@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Callable, cast
 if TYPE_CHECKING:
   from tinygrad.runtime.ops_qcom import QCOMComputeQueue, QCOMDevice
 from tinygrad.helpers import data64_le, getenv, ProfileEvent
-from tinygrad.runtime.autogen import kgsl, mesa
+from tinygrad.runtime.autogen import kgsl, adreno as mesa
 
 # Fixed rate of CP_ALWAYS_ON_COUNTER (measured 19.25-19.73 MHz on-device; nominal XO).
 AO_HZ = 19_200_000.0

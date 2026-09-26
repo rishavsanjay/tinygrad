@@ -374,6 +374,12 @@ def full_rewrite_to_sink(ast:UOp, ren:Renderer, optimize:bool=True) -> UOp:
   pm_decomp = symbolic_simple+get_simplifying_rewrite_patterns(supported_ops)
   sink = graph_rewrite(sink, pm_decomp, name="early decompositions")
 
+  # Backends that emulate wide integers may need transcendental expansions
+  # before dtype decomposition so newly introduced wide UOps are split there.
+  if (early_decomp:=getattr(ren, "early_decomp_matcher", None)) is not None:
+    sink = graph_rewrite(sink, pm_decomp+early_decomp+get_late_rewrite_patterns(supported_ops, bool(DISABLE_FAST_IDIV)),
+                         ctx=ren, name="renderer early decompositions")
+
   # late decomps + move gates from unrenderable INVALID where
   sink = graph_rewrite(sink, pm_dtype_decomps+pm_commit_weak, ctx=(set(), ren), name="decomp dtypes")
   pm_decomp = pm_decomp+\

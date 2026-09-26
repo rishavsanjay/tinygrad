@@ -6,10 +6,9 @@ from typing import Any, cast
 from tinygrad.device import BufferSpec, Device, TinyELF
 from tinygrad.runtime.support.hcq import HCQBuffer, HWQueue, HCQProgram, HCQCompiled, HCQAllocatorBase, HCQSignal, HCQArgsState, BumpAllocator
 from tinygrad.runtime.support.hcq import FileIOInterface, MMIOInterface
-from tinygrad.runtime.autogen import kgsl, mesa
+from tinygrad.runtime.autogen import kgsl, adreno as mesa
 from tinygrad.renderer import Renderer
 from tinygrad.renderer.cstyle import QCOMCLRenderer
-from tinygrad.renderer.nir import IR3Renderer
 from tinygrad.helpers import getenv, mv_address, to_mv, round_up, data64_le, ceildiv, prod, cpu_profile, lo32, suppress_finalizing, is_image_shape
 from tinygrad.helpers import next_power2, flatten, PROFILE, IMAGE, ContextVar, VIZ
 from tinygrad.dtype import dtypes, AddrSpace, DType
@@ -627,15 +626,26 @@ class QCOMArgsState(HCQArgsState):
 
 class QCOMProgram(HCQProgram['QCOMDevice']):
   scratch:QCOMScratch
+  def _decode_shader(self, obj:TinyELF):
+    from tinygrad.renderer.nir import IR3Renderer
+    if not isinstance(self.dev.renderer, IR3Renderer): return None
+    from tinygrad.runtime.support.compiler_mesa import IR3Compiler
+    v, imm, binary = IR3Compiler.unpack_lib(obj.lib)
+    if v.arch != self.dev.renderer.target.arch: raise ValueError(f"IR3 shader target {v.arch} does not match {self.dev.renderer.target.arch}")
+    if v.build != cast(IR3Compiler, self.dev.renderer.compiler).build: raise ValueError("IR3 shader Mesa build mismatch; recompile shader")
+    return v, imm, binary
+
   def __init__(self, dev: QCOMDevice, obj: TinyELF):
     self.dev: QCOMDevice = dev
-    self.signature, self.name, self.NIR = obj.signature, obj.name, isinstance(dev.renderer, IR3Renderer)
+    self.signature, self.name = obj.signature, obj.name
+    # NIR is the historical name for the typed compute ABI and CP_EXEC_CS dispatch.
+    # Native ADRENO supplies this ABI without invoking the NIR/IR3 compiler.
+    decoded = self._decode_shader(obj)
+    self.NIR = decoded is not None
 
     if self.NIR:
-      from tinygrad.runtime.support.compiler_mesa import IR3Compiler
-      v, imm_vals, self.image = IR3Compiler.unpack_lib(obj.lib)
-      if v.arch != dev.renderer.target.arch: raise ValueError(f"IR3 shader target {v.arch} does not match {dev.renderer.target.arch}")
-      if v.build != cast(IR3Compiler, dev.renderer.compiler).build: raise ValueError("IR3 shader Mesa build mismatch; recompile shader")
+      assert decoded is not None
+      v, imm_vals, self.image = decoded
       self.param_layout, self.round_robin_mode, self.write_slots = v.params, v.round_robin_mode, v.writes
       slots = {slot for _,slot,_,_ in self.signature}
       if any(slot not in slots for slot,_,_ in v.params) or any(slot not in slots for slot in v.writes):
@@ -808,6 +818,23 @@ def flag(nm, val): return (val << getattr(kgsl, f"{nm}_SHIFT")) & getattr(kgsl, 
 class QCOMDevice(HCQCompiled):
   _stack: HCQBuffer
   _scratch: QCOMScratch
+  program_type = QCOMProgram
+
+  def _device_info(self, gpu_id:int):
+    if gpu_id // 100 == 6 or gpu_id == 702: return 6, gpu_id, None
+    from tinygrad.runtime.autogen import mesa as mesa_lib
+    dev_id = mesa_lib.struct_fd_dev_id(gpu_id, self.chip_id)
+    try: raw_dev_info = mesa_lib.fd_dev_info_raw(dev_id)
+    except AttributeError as e:
+      raise RuntimeError(f"tinymesa required or device unsupported: chip_id={self.chip_id:#x} gpu_id={gpu_id}") from e
+    if not raw_dev_info or raw_dev_info.contents.chip == 0:
+      raise RuntimeError(f"tinymesa required or device unsupported: chip_id={self.chip_id:#x} gpu_id={gpu_id}")
+    return raw_dev_info.contents.chip, dev_id.gpu_id or raw_dev_info.contents.chip * 100, mesa_lib.fd_dev_info(dev_id)
+
+  def _renderer_types(self) -> list[type[Renderer]]:
+    from tinygrad.renderer.nir import IR3Renderer
+    return [QCOMCLRenderer, IR3Renderer] if self.gen == 6 else [IR3Renderer]
+
   def __init__(self, device:str=""):
     self.fd = FileIOInterface('/dev/kgsl-3d0', os.O_RDWR)
     info = kgsl.struct_kgsl_devinfo()
@@ -818,17 +845,8 @@ class QCOMDevice(HCQCompiled):
       if self.chip_id == 0x07002000: gpu_id = 702  # A702 has a 7xx marketing ID but uses A6xx.
       elif (major:=(self.chip_id >> 24) & 0xff) < 0x10:
         gpu_id = major * 100 + ((self.chip_id >> 16) & 0xff) * 10 + ((self.chip_id >> 8) & 0xff)
-    dev_id = mesa.struct_fd_dev_id(gpu_id, self.chip_id)
     self.dev_info: Any
-    if gpu_id // 100 == 6 or gpu_id == 702: self.gen, self.dev_info = 6, None
-    else:
-      try: raw_dev_info = mesa.fd_dev_info_raw(dev_id)
-      except AttributeError as e:
-        raise RuntimeError(f"tinymesa required or device unsupported: chip_id={self.chip_id:#x} gpu_id={gpu_id}") from e
-      if not raw_dev_info or raw_dev_info.contents.chip == 0:
-        raise RuntimeError(f"tinymesa required or device unsupported: chip_id={self.chip_id:#x} gpu_id={gpu_id}")
-      self.gen, self.dev_info = raw_dev_info.contents.chip, mesa.fd_dev_info(dev_id)
-    gpu_id = dev_id.gpu_id or self.gen * 100
+    self.gen, gpu_id, self.dev_info = self._device_info(gpu_id)
     if self.gen not in (6, 8): raise RuntimeError(f"Unsupported GPU: chip_id={self.chip_id:#x}")
     if self.gen == 6: self.dummy_addr = int(self._gpu_alloc(0x1000).va_addr)
 
@@ -862,8 +880,8 @@ class QCOMDevice(HCQCompiled):
     arch = f"a{gpu_id}{',IMAGE_PITCH_ALIGNMENT=64' if self.gen == 6 and IMAGE else ''}"
     if self.gen == 8 and IMAGE: arch += ",QCOM_IMAGE_PITCH_ALIGNMENT=16"
     if self.gen == 8: arch += f",chip_id={self.chip_id:#x}"
-    renderers:list[type[Renderer]] = [QCOMCLRenderer, IR3Renderer] if self.gen == 6 else [IR3Renderer]
-    super().__init__(device, QCOMAllocator(self), renderers, QCOMProgram, QCOMSignal, functools.partial(QCOMComputeQueue, self), arch=arch)
+    super().__init__(device, QCOMAllocator(self), self._renderer_types(), self.program_type,
+                     QCOMSignal, functools.partial(QCOMComputeQueue, self), arch=arch)
     if self.gen == 8: self.kernargs_offset_allocator = QCOMRingAllocator(self, self.kernargs_buf.size)
 
   def _gpu_alloc(self, size:int, flags:int=0, uncached=False, fill_zeroes=False) -> HCQBuffer:
