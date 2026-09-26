@@ -1,0 +1,109 @@
+{
+  "device": "ADRENO",
+  "torch_threads": 1,
+  "processes_requested": 5,
+  "processes": [
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 1,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      },
+      "device": "ADRENO",
+      "gpu": {
+        "bad_count": 0,
+        "max_error": 2.6226043701171875e-06,
+        "bad_blocks": []
+      },
+      "inputs_unchanged": true
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 1,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      },
+      "device": "ADRENO",
+      "gpu": {
+        "bad_count": 0,
+        "max_error": 2.6226043701171875e-06,
+        "bad_blocks": []
+      },
+      "inputs_unchanged": true
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 1,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      },
+      "device": "ADRENO",
+      "gpu": {
+        "bad_count": 0,
+        "max_error": 2.6226043701171875e-06,
+        "bad_blocks": []
+      },
+      "inputs_unchanged": true
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 1,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      },
+      "device": "ADRENO",
+      "gpu": {
+        "bad_count": 0,
+        "max_error": 2.6226043701171875e-06,
+        "bad_blocks": []
+      },
+      "inputs_unchanged": true
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 1,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      },
+      "device": "ADRENO",
+      "gpu": {
+        "bad_count": 0,
+        "max_error": 2.6226043701171875e-06,
+        "bad_blocks": []
+      },
+      "inputs_unchanged": true
+    }
+  ],
+  "torch_failures": 0,
+  "gpu_failures": 0
+}

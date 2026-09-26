@@ -78,24 +78,50 @@ Conv disagreement.
   `image-qualification-100x5000.json` used short page-backed images before the
   span change; the new record uses 16×16 RGBA FP32 images with 4,096 logical bytes.
 - The previously rejected `IMAGE=2` cross entropy and cumprod ops now pass
-  on A830. A full backend ops run without fail-fast reached 75% before its
-  420-second timeout and recorded other failures without useful tracebacks.
-  In a fresh-cache fail-fast run, grouped Conv2D failed on 63/1260 values;
-  the same test also failed with `IMAGE=0`, affecting a different batch. The
-  broad ops gate remains **failed** and those failures need classification.
-- Broad `IMAGE=0` backend ops gate remains **failed** on batch-local Conv1D
-  values. The same seed-42 probe fails with the pre-image renderer, and the
-  failing batches change between runs. This is an inherited, nondeterministic
-  correctness issue rather than evidence that image support introduced it.
+  on A830. The broad `IMAGE=2` gate under Android Torch's default eight
+  threads reported grouped Conv2D failures and later timed out. That grouped
+  Conv result was a faulty reference, as shown below. A fresh-cache complete
+  run of `test/backend/test_ops.py` with `OMP_NUM_THREADS=1`
+  `OPENBLAS_NUM_THREADS=1`, `DEV=ADRENO`, `IMAGE=2`, and
+  `MESA_PATH=/nonexistent` passed: **409 passed, 20 skipped, 109 subtests
+  passed** in 541.35 seconds. The earlier 420-second command limit expired
+  near the end of an otherwise failure-free single-threaded run.
+- An earlier broad `IMAGE=0` gate reported batch-local Conv1D differences,
+  also with changing failed batches across processes. With both thread limits,
+  the `-k conv1d` selection passed four tests and 17 subtests. A fresh-cache
+  complete `IMAGE=0` run then passed: **421 passed, 8 skipped, 126 subtests
+  passed** in 529.52 seconds. The earlier Conv1D mismatch has not been
+  isolated against an independent scalar reference.
 - Full model reference equality, 100 fresh *model captures*, and changed-input
-  *model* replay are not qualified by the image tests above.
+  *model* replay are not qualified by these backend tests.
+
+## Android Torch reference check
+
+`experiments/adreno_grouped_conv_reference.py` uses fixed NumPy seed 0 and
+computes grouped Conv2D with explicit scalar products, independent of Torch
+and either GPU compiler. On this phone with Torch 2.11.0, ten fresh CPU-only
+processes at Torch's default eight threads gave three reference failures;
+the bad values occupied complete 63-element batch/group blocks. Ten fresh
+processes with `torch.set_num_threads(1)` gave zero failures. Setting only
+`OPENBLAS_NUM_THREADS=1` still gave three failures in ten processes, while
+setting only `OMP_NUM_THREADS=1` gave zero failures in ten and made Torch
+report one thread. The records are `torch-grouped-default-10.json`,
+`torch-grouped-one-thread-10.json`, `torch-grouped-openblas-one-10.json`, and
+`torch-grouped-omp-one-10.json`. This identifies Android's threaded CPU
+reference path; the effective control for this build is `OMP_NUM_THREADS=1`.
+
+With Torch set to one thread, native ADRENO and Mesa QCOM each matched the
+scalar reference in five fresh processes with unchanged input tensors;
+`grouped-native-5.json` and `grouped-qcom-5.json` record this comparison.
+Earlier default-thread `test_grouped_conv2d` failures therefore do not
+establish a backend bug or a random-input seed bug. The isolated CPU-only
+reproduction identifies the test reference as the source of those mismatches.
 
 The reproducible process/replay probe is `experiments/adreno_image_qualification.py`.
 It verifies that native UAV image instructions were compiled, checks outputs
 and source bytes, and records each fresh-process result and changed-address
-replay. Passing it is an additional gate; it does not clear the broad ops or
-model correctness failures.
+replay. Passing it does not clear model correctness gates.
 
-Do not treat targeted image execution as production qualification. The broad
-ops failures, Conv1D nondeterminism, and controlled Conv node 5 numerical
-difference remain open gates.
+Do not treat the backend ops suite as production model qualification. The
+controlled Conv node 5 numerical difference and full-model capture/replay
+remain open gates.

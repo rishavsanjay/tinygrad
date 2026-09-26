@@ -1,0 +1,161 @@
+{
+  "device": null,
+  "torch_threads": null,
+  "processes_requested": 10,
+  "processes": [
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 126,
+        "max_error": 34.908138275146484,
+        "bad_blocks": [
+          [
+            1,
+            1,
+            63
+          ],
+          [
+            2,
+            0,
+            63
+          ]
+        ]
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 63,
+        "max_error": 27.7808837890625,
+        "bad_blocks": [
+          [
+            0,
+            2,
+            63
+          ]
+        ]
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 63,
+        "max_error": 23.34363555908203,
+        "bad_blocks": [
+          [
+            0,
+            0,
+            63
+          ]
+        ]
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      }
+    },
+    {
+      "torch_version": "2.11.0",
+      "torch_threads": 8,
+      "input_sha256": [
+        "0607b7a2c5b3c9f0c1dc59846c1e50caa9ac5c655e8eab2935548c3ae565ff76",
+        "68f8d3946c8eeb21b8dadd09607510c61bf48bafbff6306c546b78338f112215"
+      ],
+      "torch": {
+        "bad_count": 0,
+        "max_error": 3.814697265625e-06,
+        "bad_blocks": []
+      }
+    }
+  ],
+  "torch_failures": 3
+}
