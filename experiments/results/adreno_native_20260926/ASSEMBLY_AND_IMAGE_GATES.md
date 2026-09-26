@@ -1,10 +1,10 @@
 # A830 native assembly and image qualification, 2026-09-26
 
 Target: physical Adreno 830v2, chip ID `0x44050001`. Native runs used
-`DEV=ADRENO`, `MESA_PATH=/nonexistent`, and fresh compiler caches. The local
-Mesa source snapshot inspected is labeled 26.2.1 at
-`da14d65e4499e66468094be52bff9ea0915a695e`; this extracted snapshot has
-no Git metadata to independently verify its commit ID.
+`DEV=ADRENO`, `MESA_PATH=/nonexistent`, and fresh compiler caches. The four
+local Mesa source files cited below were checked byte-for-byte against Mesa's
+official raw files at commit `da14d65e4499e66468094be52bff9ea0915a695e`:
+`ir3-cat6.xml`, `ir3_a6xx.c`, `fd6_view.cc`, and `fd6_layout.c` all matched.
 
 ## Mesa-grounded image contract
 
