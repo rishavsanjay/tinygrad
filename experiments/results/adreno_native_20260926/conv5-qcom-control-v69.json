@@ -1,0 +1,37 @@
+{
+  "device": "QCOM",
+  "inputs_sha256": {
+    "cpu_div": "a8a9e212e241d15101ca13cdc2f99e946466e0f524d6c4cb56f5162ad1db8ffa",
+    "native_div": "54b71f5eed8d6ebfe90d0f3f6d0343b960558f33b8356f1aab984cece8ea8640"
+  },
+  "weights_sha256": {
+    "w": "ad0e89d72b88ba3a03417af079d9dc4fd4a2795f571b5fbe18c6b61a6026f3b6",
+    "b": "012eeed36c6508a9bf965591e741271869a9a093be5c426dc74df1ae92a7dd6b"
+  },
+  "outputs": {
+    "cpu_div": {
+      "sha256": "d14ab8571bb6f2b032a159ab8873f8a0976f83444611e8144129679d804306fb",
+      "shape": [
+        1,
+        64,
+        64,
+        128
+      ],
+      "dtype": "float16"
+    },
+    "native_div": {
+      "sha256": "726624ba74a9fab94a3e27189ffb6b726e4a6cfa68d75903f4c6286707e0b557",
+      "shape": [
+        1,
+        64,
+        64,
+        128
+      ],
+      "dtype": "float16"
+    }
+  },
+  "fp16_product": {
+    "sampled": 131072,
+    "bitwise_bad": 0
+  }
+}

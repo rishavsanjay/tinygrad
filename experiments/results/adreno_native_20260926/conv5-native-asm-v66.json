@@ -1,0 +1,47 @@
+{
+  "device": "ADRENO",
+  "input_sha256": "a8a9e212e241d15101ca13cdc2f99e946466e0f524d6c4cb56f5162ad1db8ffa",
+  "weight_sha256": "ad0e89d72b88ba3a03417af079d9dc4fd4a2795f571b5fbe18c6b61a6026f3b6",
+  "programs": [
+    {
+      "name": "r_16_8_2_8_16_4_4_24_3_3",
+      "artifact_sha256": "6dea96d57485025f0768a40a8cf9a9a09f793d9acebb7f00f05f7f5c7b562fc8",
+      "artifact_bytes": 52115,
+      "disassembly_lines": 6432,
+      "signature": [
+        [
+          null,
+          0,
+          "dtypes.half",
+          [
+            524288
+          ]
+        ],
+        [
+          null,
+          1,
+          "dtypes.half",
+          [
+            786432
+          ]
+        ],
+        [
+          null,
+          2,
+          "dtypes.half",
+          [
+            13824
+          ]
+        ],
+        [
+          null,
+          3,
+          "dtypes.half",
+          [
+            64
+          ]
+        ]
+      ]
+    }
+  ]
+}
