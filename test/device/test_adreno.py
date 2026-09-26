@@ -4,7 +4,8 @@ from tinygrad import Device, Tensor, TinyJit, Variable, dtypes
 from tinygrad.codegen import to_program
 from tinygrad.device import Buffer, TinyELF
 from tinygrad.dtype import AddrSpace
-from tinygrad.uop.ops import UOp, KernelInfo, Ops
+from tinygrad.helpers import Context, IMAGE
+from tinygrad.uop.ops import UOp, KernelInfo, Ops, AxisType
 from tinygrad.runtime.support.compiler_adreno import AdrenoCompiler
 from tinygrad.runtime.support.hcq import HCQBuffer
 
@@ -210,5 +211,67 @@ class TestAdrenoExecution(unittest.TestCase):
     Device['ADRENO'].synchronize()
     self.assertFalse([m for m in sys.modules if m in ('tinygrad.renderer.nir','tinygrad.runtime.support.compiler_mesa',
                                                     'tinygrad.runtime.autogen.mesa')])
+
+@unittest.skipUnless(os.getenv('DEV','').split(':')[0]=='ADRENO' and IMAGE.value==2, 'requires A830 with IMAGE=2')
+class TestAdrenoImages(unittest.TestCase):
+  def test_fp32_fp16_image_arithmetic_and_buffer_bias(self):
+    for dt,npdt,tol in ((dtypes.float,np.float32,1e-6),(dtypes.half,np.float16,3e-3)):
+      with self.subTest(dtype=dt):
+        a=(np.arange(7*16*4,dtype=np.float32).reshape(7,16,4)/17).astype(npdt)
+        x=Tensor(a,device='ADRENO',dtype=dt).contiguous().realize()
+        bias=Tensor([1.5],device='ADRENO',dtype=dtypes.float).realize()
+        out=((x+2).contiguous().realize()*bias).contiguous().numpy()
+        np.testing.assert_allclose(out,(a+2)*1.5,rtol=tol,atol=tol)
+        np.testing.assert_array_equal(x.numpy(),a)
+
+  def test_interleaved_images_and_coherent_update(self):
+    a=np.arange(5*16*4,dtype=np.float32).reshape(5,16,4)/11
+    b=np.flip(a,axis=1).copy()+0.5
+    def dual(out_add,in_a,out_mul,in_b):
+      y,x,c=UOp.range(5,0),UOp.range(16,1),UOp.range(4,2,AxisType.UPCAST)
+      add=out_add[y,x,c].store(in_a[y,x,c]+in_b[y,x,c])
+      mul=out_mul[y,x,c].store(in_a[y,x,c]*in_b[y,x,c])
+      return UOp.group(add,mul).end(y,x,c).sink(arg=KernelInfo(name='native_image_dual'))
+    out_add,in_a,out_mul,in_b=(Tensor.empty(*a.shape,device='ADRENO'),Tensor(a,device='ADRENO').contiguous().realize(),
+                               Tensor.empty(*a.shape,device='ADRENO'),Tensor(b,device='ADRENO').contiguous().realize())
+    result=Tensor.custom_kernel(out_add,in_a,out_mul,in_b,fxn=dual)
+    Tensor.realize(result[0],result[2])
+    np.testing.assert_allclose(result[0].numpy(),a+b,rtol=1e-6,atol=1e-6)
+    np.testing.assert_allclose(result[2].numpy(),a*b,rtol=1e-6,atol=1e-6)
+    def update(image):
+      y,x,c=UOp.range(5,0),UOp.range(16,1),UOp.range(4,2,AxisType.UPCAST)
+      return image[y,x,c].store(image[y,x,c]*2+1).end(y,x,c).sink(arg=KernelInfo(name='native_image_update'))
+    same=Tensor.custom_kernel(Tensor(a,device='ADRENO').contiguous().realize(),fxn=update)[0]
+    np.testing.assert_allclose(same.numpy(),a*2+1,rtol=1e-6,atol=1e-6)
+
+  def test_jit_image_rebinding_and_alignment(self):
+    @TinyJit
+    def transform(x): return ((x+1).contiguous().realize()*2).contiguous().realize()
+    addresses=[]
+    for val in range(1,11,2):
+      x=Tensor.full((7,16,4),val,device='ADRENO').contiguous().realize()
+      addresses.append(int(x.uop.buffer._buf.va_addr))
+      np.testing.assert_array_equal(transform(x).numpy(),np.full((7,16,4),(val+1)*2,dtype=np.float32))
+    self.assertGreater(len(set(addresses)),1)
+    base=Buffer('ADRENO',1040,dtypes.float).allocate()
+    aligned=base.view(5*16*4,dtypes.float,64).allocate()
+    img=Tensor(UOp.from_buffer(aligned).reshape((5,16,4)))
+    with Context(IMAGE=0): img.assign(Tensor.ones(5,16,4,device='ADRENO')).realize()
+    np.testing.assert_array_equal((img+1).contiguous().numpy(),np.full((5,16,4),2,dtype=np.float32))
+    bad=Tensor(UOp.from_buffer(base.view(5*16*4,dtypes.float,16).allocate()).reshape((5,16,4)))
+    with self.assertRaisesRegex(ValueError,'unaligned QCOM image address'): (bad+1).contiguous().realize()
+
+  def test_asymmetric_padding_zero_border(self):
+    x=np.arange(1*1*4*4,dtype=np.float32).reshape(1,1,4,4)/7
+    w=np.array([[[[1,-2],[3,0.5]]]],dtype=np.float32)
+    for pad in ((0,1,0,1),(2,1,2,1),(2,0,2,1)):
+      with self.subTest(pad=pad):
+        left,right,top,bottom=pad
+        padded=np.pad(x,((0,0),(0,0),(top,bottom),(left,right)))
+        expected=np.empty((1,1,padded.shape[2]-1,padded.shape[3]-1),dtype=np.float32)
+        for y in range(expected.shape[2]):
+          for xidx in range(expected.shape[3]): expected[0,0,y,xidx]=(padded[0,0,y:y+2,xidx:xidx+2]*w[0,0]).sum()
+        out=Tensor(x,device='ADRENO').conv2d(Tensor(w,device='ADRENO'),padding=pad).numpy()
+        np.testing.assert_allclose(out,expected,rtol=1e-5,atol=1e-5)
 
 if __name__=='__main__': unittest.main()

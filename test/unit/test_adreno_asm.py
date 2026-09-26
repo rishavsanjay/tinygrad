@@ -1,15 +1,16 @@
 import json, struct, unittest
 from tinygrad.codegen import to_program
+from tinygrad import Tensor
 from tinygrad.dtype import dtypes, AddrSpace
-from tinygrad.helpers import Target
+from tinygrad.helpers import Target, Context
 from tinygrad.renderer.adreno import AdrenoRenderer
-from tinygrad.runtime.support.compiler_adreno import ARCH, AdrenoCompiler, assemble, encode, field, disassemble_word
+from tinygrad.runtime.support.compiler_adreno import ARCH, ARCH_IMAGE, AdrenoCompiler, assemble, encode, field, disassemble_word
 from tinygrad.uop.ops import AxisType, KernelInfo, UOp, Ops
 
 class TestAdrenoEncoding(unittest.TestCase):
   def test_independent_machine_words(self):
-    # Mesa 26.2.1 ir3/tests/disasm.c: words observed from vendor shaders, not
-    # roundtrips through this assembler. These layouts are valid on A830.
+    # Mesa 26.2.1 ir3/tests/disasm.c and physical A830 QCOM IR3 image
+    # disassembly: independent words, not roundtrips through this assembler.
     cases = [
       ({'op':'end'}, 0x0300000000000000),
       ({'op':'br','offset':-4}, 0x00800000fffffffc),
@@ -26,6 +27,8 @@ class TestAdrenoEncoding(unittest.TestCase):
       ({'op':'bar','global':True,'sy':True}, 0xf042000000000000),
       ({'op':'ldp','dst':24,'addr':8,'type':'u32','size':3}, 0xc086001803820001),
       ({'op':'stp','addr':45,'src':1,'type':'f32','offset':-176}, 0xc1425b5001803e02),
+      ({'op':'ldib','data':5,'coord':3,'uav':0}, 0xc02200050361ba00),
+      ({'op':'stib','data':9,'coord':3,'uav':0}, 0xc022000903677a00),
     ]
     for instruction, word in cases:
       with self.subTest(instruction=instruction): self.assertEqual(encode(instruction),word)
@@ -40,6 +43,7 @@ class TestAdrenoEncoding(unittest.TestCase):
     self.assertEqual(disassemble_word(0x2024400000000020),'mov.f32f32 r0.x, c8.x')
     self.assertEqual(disassemble_word(0x00800000fffffffc),'br p0.x, #-4')
     self.assertEqual(disassemble_word(0xc00600030180c269),'ldg.u32 r0.w, g[r0.w+308], 1')
+    self.assertEqual(disassemble_word(0xc02200050361ba00),'ldib.b.typed.2d.f32.4.imm r1.y, r0.w, 0')
     with self.assertRaises(ValueError): disassemble_word(0xe000000000000000)
 
   def test_branch_resolution(self):
@@ -51,6 +55,19 @@ class TestAdrenoEncoding(unittest.TestCase):
     with self.assertRaises(ValueError): assemble([{'op':'max.u','dst':0,'src1':('r',0),'src2':('r',1)}])
 
 class TestAdrenoCompiler(unittest.TestCase):
+  def test_image_lowering_and_artifact(self):
+    with Context(IMAGE=2):
+      src=Tensor.empty(5,16,4,device='ADRENO',dtype=dtypes.float)
+      ast=(src+1).contiguous().schedule_linear().src[-1].src[0]
+      p=to_program(ast,AdrenoRenderer(Target('ADRENO',arch=ARCH_IMAGE)))
+    resources,signature,_=AdrenoCompiler.unpack(p.to_elf().lib)
+    self.assertEqual(resources.arch,ARCH_IMAGE)
+    self.assertEqual(resources.num_uavs,2)
+    self.assertEqual(resources.params,())
+    self.assertEqual([arg[3] for arg in signature],[[5,16,4],[5,16,4]])
+    ops={ins['op'] for ins in json.loads(p.src[2].arg)['instructions']}
+    self.assertTrue({'ldib','stib'}<=ops)
+
   def program(self):
     dst,src=UOp.param(0,dtypes.float,shape=(257,)),UOp.param(1,dtypes.float,shape=(257,))
     i=UOp.range(257,0,AxisType.GLOBAL)

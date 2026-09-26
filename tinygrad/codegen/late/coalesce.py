@@ -79,7 +79,7 @@ def image_valid_dims(base:DType, size:int, arch:str) -> list[tuple[int,int]]:
 
 def transform_to_image(ctx, buf:UOp, x:UOp) -> UOp|None:
   shapes, ren, _image_slots = ctx
-  if not IMAGE or ren.target.device not in {"QCOM", "CL", "PYTHON", "NULL"}: return None
+  if not IMAGE or ren.target.device not in {"QCOM", "ADRENO", "CL", "PYTHON", "NULL"}: return None
   valid, x = x.get_valid(), x.get_idx()
   # search for dims that drop the most valid statements
   best_drop, cands = -1, []

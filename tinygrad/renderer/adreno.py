@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json, struct
 from tinygrad.dtype import AddrSpace, dtypes
-from tinygrad.helpers import Target, round_up, getenv
+from tinygrad.helpers import Target, round_up, getenv, is_image_shape, IMAGE
 from tinygrad.renderer import Renderer
 from tinygrad.runtime.support.compiler_adreno import AdrenoCompiler, ARCH
 from tinygrad.uop.ops import Ops, UOp, GroupOp, UPat, PatternMatcher
@@ -53,6 +53,7 @@ class AdrenoRenderer(Renderer):
 
   def __init__(self, target:Target):
     super().__init__(target)
+    self.supports_float4 = bool(IMAGE)
     self.compiler = AdrenoCompiler(target.arch or ARCH)
 
   def supported_dtypes(self): return {dtypes.float, dtypes.half, dtypes.int, dtypes.uint, dtypes.bool, *dtypes.int8s, *dtypes.int16s}
@@ -65,6 +66,10 @@ class AdrenoRenderer(Renderer):
     instructions:list[dict] = []
     regs:dict[UOp,list[int]] = {}
     pointers:dict[UOp,tuple[UOp,UOp|None]] = {}
+    image_pointers:dict[UOp,tuple[UOp,UOp,UOp]] = {}
+    image_params=[u for u in uops if u.op is Ops.PARAM and is_image_shape(u._shape)]
+    if len(image_params)>32: raise ValueError('native Adreno image resource limit exceeded (32 UAVs)')
+    image_indices={u:i for i,u in enumerate(image_params)}
     positions = {u:i for i,u in enumerate(uops)}
     last = dict(positions)
     for i,u in enumerate(uops):
@@ -80,17 +85,18 @@ class AdrenoRenderer(Renderer):
           loop_begin,loop_finish = positions[rng],positions[u]
           for v in uops[:loop_begin+1]:
             if last[v]>=loop_begin: last[v] = max(last[v],loop_finish)
-    # r4-r11 are address/constant scratch; r16 holds narrow load/store and
-    # FP16 conversion intermediates. r44-r45 are private-memory reload scratch.
+    # r4-r11 are address/constant scratch. Image shaders also reserve r12-r15
+    # for RGBA data and r17-r18 for the adjacent 2D coordinate pair; r16 is
+    # narrow load/store and FP16 conversion scratch.
     reg_limit = getenv('ADRENO_MAX_REGS',176)
-    if not 16 <= reg_limit <= 176: raise ValueError('ADRENO_MAX_REGS must be 16..176 scalar registers')
-    available, allocated = set(range(12,reg_limit))-{16}, {}
+    if not (20 if image_params else 16) <= reg_limit <= 176: raise ValueError('ADRENO_MAX_REGS is outside the native register range')
+    available, allocated = set(range(12,reg_limit))-(set(range(12,19)) if image_params else {16}), {}
     free_spills:set[int] = set()
     private_size = 0
     local_offsets:dict[UOp,int] = {}
     shared_size = 0
     current:UOp
-    max_reg = 12
+    max_reg = 20 if image_params else 12
     def alloc(n=1):
       nonlocal max_reg, private_size
       ret = sorted(available)[:n]
@@ -151,6 +157,7 @@ class AdrenoRenderer(Renderer):
     scalars = sorted({u.arg.slot for u in params if u.addrspace == AddrSpace.ALU})
     layout, offsets, end = [], {}, 0
     for u in params:
+      if u in image_indices: continue
       size = u.dtype.itemsize if u.addrspace == AddrSpace.ALU else 8
       if u.addrspace == AddrSpace.ALU and size != 4: raise NotImplementedError(f'native Adreno scalar width {size}')
       end = round_up(end,size)
@@ -224,7 +231,8 @@ class AdrenoRenderer(Renderer):
         for rr in regs[u]: mov(rr,('i',val),u.dtype)
         for rr in regs[u]: finish_dtype(rr,u.dtype)
       elif u.op is Ops.PARAM:
-        if u.addrspace == AddrSpace.GLOBAL: pointers[u] = (u,None)
+        if u in image_indices: pass
+        elif u.addrspace == AddrSpace.GLOBAL: pointers[u] = (u,None)
         elif u.addrspace == AddrSpace.ALU:
           regs[u] = alloc()
           mov(regs[u][0],('c',offsets[u]),u.dtype)
@@ -246,7 +254,11 @@ class AdrenoRenderer(Renderer):
         # and local invocation IDs to the ordinary r0 register file.
         mov(regs[u][0],('r',int(u.arg[-1])+(0 if u.arg[0]=='l' else 192)))
       elif u.op in (Ops.INDEX,Ops.SHRINK):
-        if u.src[0] in pointers:
+        if u.src[0] in image_indices:
+          if u.op is not Ops.INDEX or len(u.src)!=3 or u.max_numel()!=4:
+            raise NotImplementedError('native Adreno images require four-component 2D indexing')
+          image_pointers[u]=(u.src[0],u.src[1],u.src[2])
+        elif u.src[0] in pointers:
           root,_ = pointers[u.src[0]]
           pointers[u] = (root,u.src[1])
         else:
@@ -256,6 +268,21 @@ class AdrenoRenderer(Renderer):
           if len(regs[u])!=size: raise ValueError('native Adreno register index out of bounds')
       elif u.op is Ops.LOAD:
         regs[u] = alloc(u.max_numel())
+        if u.src[0] in image_pointers:
+          root,y,x=image_pointers[u.src[0]]
+          if u.max_numel()!=4: raise NotImplementedError('native Adreno image load requires RGBA')
+          mov(17,rs(x))
+          mov(18,rs(y))
+          emit('ldib',data=12,coord=17,uav=image_indices[root])
+          for lane,dst in enumerate(regs[u]):
+            if len(u.src)>1:
+              mov(dst,rs(u.src[1],lane),u.dtype)
+              compare(248,rs(u.src[2],lane),('i',0),dtypes.uint,5)
+              emit('predt')
+              max_branch = max(max_branch,branch_depth+1)
+            mov(dst,('r',12+lane),u.dtype)
+            if len(u.src)>1: emit('prede')
+          continue
         root, idx = pointers[u.src[0]]
         if root.addrspace == AddrSpace.REG:
           for lane,dst in enumerate(regs[u]): mov(dst,('r',regs[root][lane+(constant_index(idx) if idx is not None else 0)]),u.dtype)
@@ -276,6 +303,14 @@ class AdrenoRenderer(Renderer):
             else: emit('ldl' if root.addrspace==AddrSpace.LOCAL else 'ldg',dst=dst,addr=addr,type='f32' if u.dtype==dtypes.float else 'u32')
             if len(u.src)>1: emit('prede')
       elif u.op is Ops.STORE:
+        if u.src[0] in image_pointers:
+          root,y,x=image_pointers[u.src[0]]
+          if u.src[1].max_numel()!=4: raise NotImplementedError('native Adreno image store requires RGBA')
+          mov(17,rs(x))
+          mov(18,rs(y))
+          for lane,src in enumerate(regs[u.src[1]]): mov(12+lane,('r',src),u.src[1].dtype)
+          emit('stib',data=12,coord=17,uav=image_indices[root])
+          continue
         root, idx = pointers[u.src[0]]
         for lane,src in enumerate(regs[u.src[1]]):
           if root.addrspace == AddrSpace.REG:
@@ -430,4 +465,5 @@ class AdrenoRenderer(Renderer):
     emit('end')
     return json.dumps({'instructions':instructions,'fregs':(max_reg+3)//4,'constlen':(end+16+15)//16,
                        'private_size':private_size,'shared_size':shared_size,
-                       'branchstack':max_branch,'params':layout,'writes':writes,'signature':signature},separators=(',',':'))
+                       'branchstack':max_branch,'params':layout,'writes':writes,'signature':signature,
+                       'num_uavs':len(image_params)},separators=(',',':'))

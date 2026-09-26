@@ -4,6 +4,7 @@ from dataclasses import asdict
 from typing import Any
 from tinygrad.device import Compiler
 from tinygrad.helpers import round_up
+from tinygrad.helpers import is_image_shape
 from tinygrad.runtime.support.ir3 import IR3Shader
 
 # Reference notices: extra/qcom_gpu_driver/ADRENO_REFERENCE_LICENSE.
@@ -11,9 +12,10 @@ from tinygrad.runtime.support.ir3 import IR3Shader
 # This encoder is Python code; no Mesa functions or compiled shader templates are used.
 _source_root = pathlib.Path(__file__).resolve().parents[2]
 _build_sources = ('runtime/support/compiler_adreno.py', 'renderer/adreno.py', 'runtime/autogen/adreno.py', 'runtime/ops_adreno.py',
-                  'codegen/__init__.py', 'codegen/decomp/dtype.py', 'codegen/decomp/transcendental.py')
+                  'codegen/__init__.py', 'codegen/late/coalesce.py', 'codegen/decomp/dtype.py', 'codegen/decomp/transcendental.py')
 BUILD = 'tinygrad-adreno-a830-v1_' + hashlib.sha256(b''.join((_source_root/path).read_bytes() for path in _build_sources)).hexdigest()
 ARCH = 'a830,chip_id=0x44050001'
+ARCH_IMAGE = 'a830,QCOM_IMAGE_PITCH_ALIGNMENT=16,chip_id=0x44050001'
 TYPES = {'f16':0, 'f32':1, 'u16':2, 'u32':3, 's16':4, 's32':5, 'u8':6}
 CAT2 = {'add.f':0, 'min.f':1, 'max.f':2, 'mul.f':3, 'cmps.f':5, 'absneg.f':6, 'floor.f':9, 'ceil.f':10,
         'trunc.f':13, 'add.u':16, 'add.s':17, 'sub.u':18, 'sub.s':19, 'cmps.u':20, 'cmps.s':21,
@@ -57,6 +59,15 @@ def encode(ins:dict[str, Any]) -> int:
       field(ins['src2'][1],47,8) | (operand(ins['src3'],3) << 16)
   if op in CAT4:
     return flags | (4 << 61) | (CAT4[op] << 53) | (1 << 52) | field(ins['dst'],32,8) | operand(ins['src'])
+  if op in ('ldib','stib'):
+    if ins.get('type','f32') != 'f32' or ins.get('size',4) != 4 or not 0 <= ins['uav'] < 32 or \
+       not 0 <= ins['data'] <= 252 or not 0 <= ins['coord'] <= 254:
+      raise ValueError('native Adreno image instructions require typed f32 RGBA and a valid UAV')
+    # Mesa 26.2.1 ir3-cat6.xml: typed 2D, four components, immediate UAV.
+    # A830 IR3 witnesses: ldib=0xc02200050361ba00, stib=0xc022000903677a00.
+    return flags | (6 << 61) | (2 << 52) | (TYPES['f32'] << 49) | field(ins['uav'],41,8) | \
+      field(ins['data'],32,8) | field(ins['coord'],24,8) | (6 << 20) | ({'ldib':6,'stib':29}[op] << 14) | \
+      (3 << 12) | (1 << 11) | (1 << 9)
   if op in ('ldg','ldp','ldl'):
     if ins.get('ss',False): raise ValueError('Adreno memory instructions do not encode SS')
     return flags | (6 << 61) | ({'ldg':0,'ldl':1,'ldp':2}[op] << 54) | (TYPES[ins.get('type','u32')] << 49) | field(ins['dst'],32,8) | \
@@ -127,6 +138,9 @@ def disassemble_word(word:int) -> str:
   if cat==4:
     return flags+f'{ {v:k for k,v in CAT4.items()}[(word>>53)&63] } {reg(dst)}, {src(word&0xffff)}'
   if cat==6:
+    if (word>>52)&3==2 and (word>>14)&63 in (6,29):
+      op='ldib' if (word>>14)&63==6 else 'stib'
+      return flags+f'{op}.b.typed.2d.f32.4.imm {reg((word>>32)&255)}, {reg((word>>24)&255)}, {(word>>41)&255}'
     typ={v:k for k,v in TYPES.items()}[(word>>49)&7]
     size=(word>>24)&7
     if (word>>54)&31 in (0,1,2):
@@ -143,7 +157,7 @@ def disassemble_word(word:int) -> str:
 
 class AdrenoCompiler(Compiler):
   def __init__(self, arch:str=ARCH):
-    if arch != ARCH: raise ValueError(f'unsupported native Adreno target {arch!r}')
+    if arch not in (ARCH,ARCH_IMAGE): raise ValueError(f'unsupported native Adreno target {arch!r}')
     self.arch = arch
     super().__init__(f'compile_{BUILD}_{arch}')
 
@@ -152,7 +166,7 @@ class AdrenoCompiler(Compiler):
     binary = assemble(source['instructions'])
     resources = IR3Shader(self.arch, BUILD, source['branchstack'], source['private_size'], source.get('shared_size',0),
                           False, False, True, len(binary)//128, False,
-                          source['constlen'], 0xfc, 192, 0, 16, 0, 0, (), source['fregs'], 0, False,
+                          source['constlen'], 0xfc, 192, 0, 16, 0, source.get('num_uavs',0), (), source['fregs'], 0, False,
                           tuple(tuple(p) for p in source['params']), tuple(source['writes']))
     resources.validate()
     meta = json.dumps({'resources':asdict(resources), 'signature':source['signature']}, sort_keys=True, separators=(',',':')).encode()
@@ -173,9 +187,9 @@ class AdrenoCompiler(Compiler):
         fields[key] = tuple(tuple(p) if isinstance(p,list) else p for p in fields[key])
       resources = IR3Shader(**fields)
       resources.validate()
-      if resources.arch != ARCH or resources.build != BUILD or resources.instrlen != nbin//128:
+      if resources.arch not in (ARCH,ARCH_IMAGE) or resources.build != BUILD or resources.instrlen != nbin//128:
         raise ValueError('native Adreno artifact target/build/length mismatch')
-      if resources.pvtmem_size > 4096 or resources.shared_size > 32768 or resources.num_uavs:
+      if resources.pvtmem_size > 4096 or resources.shared_size > 32768 or resources.num_uavs > 32:
         raise ValueError('native Adreno artifact requests unsupported resources')
       if not 3 <= resources.fregs <= 48 or resources.hregs or resources.wgid != 192 or resources.lid != 0 or resources.buf_off != 16:
         raise ValueError('native Adreno artifact register/argument layout mismatch')
@@ -185,12 +199,16 @@ class AdrenoCompiler(Compiler):
       if not 1<=resources.constlen<=64 or resources.buf_off+max((offset+size for _,offset,size in resources.params),default=0)>resources.constlen*16:
         raise ValueError('native Adreno artifact constants do not cover arguments')
       signature = meta['signature']
-      if not isinstance(signature,list) or len(signature)!=len(resources.params): raise ValueError('native Adreno artifact ABI length mismatch')
+      if not isinstance(signature,list) or len(signature)!=len(resources.params)+resources.num_uavs:
+        raise ValueError('native Adreno artifact ABI length mismatch')
       for arg in signature:
         if not isinstance(arg,list) or len(arg)!=4 or (arg[0] is not None and not isinstance(arg[0],str)) or \
            type(arg[1]) is not int or arg[1]<0 or not isinstance(arg[2],str) or not isinstance(arg[3],list) or \
            any(type(dim) is not int or dim<0 for dim in arg[3]): raise ValueError('native Adreno artifact malformed signature')
-      if sorted(arg[1] for arg in signature)!=sorted(slot for slot,_,_ in resources.params):
+      image_args=[arg for arg in signature if is_image_shape(tuple(arg[3]))]
+      if len(image_args)!=resources.num_uavs or any(arg[2] not in ('float','half') for arg in image_args):
+        raise ValueError('native Adreno artifact image signature mismatch')
+      if sorted(arg[1] for arg in signature if not is_image_shape(tuple(arg[3])))!=sorted(slot for slot,_,_ in resources.params):
         raise ValueError('native Adreno artifact argument slots mismatch')
       return resources, signature, data[44+nmeta:]
     except (KeyError, TypeError, UnicodeError) as e: raise ValueError('invalid native Adreno metadata') from e
