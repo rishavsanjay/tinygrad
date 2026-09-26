@@ -1,0 +1,47 @@
+{
+  "model_sha256": "659727c4d4839adc4992a254409a54259a8756a743f2d567bf5fdc6579f8009b",
+  "device": "ADRENO",
+  "seed": 42,
+  "checks": [
+    {
+      "phase": "reference",
+      "seed": 42,
+      "seconds": 9.829741298977751,
+      "sha256": "feabfa189ce39cb30f74b3d5df3880e25905ddc91d255ed66cedf8bc87f1bc60"
+    },
+    {
+      "phase": "reference",
+      "seed": 43,
+      "seconds": 1.5809216659981757,
+      "sha256": "2a9e1b721dda6a68bb5b0a69d254fd7f00e611525ad46892b6000d6bdd34ab94"
+    }
+  ],
+  "flags": {
+    "DEV": "ADRENO",
+    "IMAGE": "0",
+    "FLOAT16": "1",
+    "OPENPILOT_HACKS": "1",
+    "NOLOCALS": "0",
+    "JIT_BATCH_SIZE": "0"
+  },
+  "rtol": 0.002,
+  "atol": 0.002,
+  "input_hashes": [
+    {
+      "action_t": "20e8583b46f977bd259552118a3dd284c5dfe352014475305e7e151c2153dc51",
+      "big_img": "3973b44feada5ce62a4b9bbbcf65454c9038c01e91aecd2f95428ea2b254933e",
+      "desire_pulse": "57b9dffebb37a29ab62d977ef951dbaff7dd7750e9afa79c305dd4fed75b4802",
+      "features_buffer": "150fd16cad5406e9cd629b4bfd6b4f14b92979279eafd3b7593bc5e4ce2db598",
+      "img": "f96109b948bb01604d9b7bd2c8fda167db67fd51cb66651c3765d2af95be590e",
+      "traffic_convention": "226f1c52b385ecaa3e77de1699ec1235b24c3d6900c78e2186a6f7e9c34369a5"
+    },
+    {
+      "action_t": "99e2fdca7d3a9b4cc152751384b5a5fd388610a5b1a7db54dcfe7e3d80b1a77c",
+      "big_img": "71535a462165cd759e867a8f91093747d3cb5adade280b9ff95e80afc09790d4",
+      "desire_pulse": "921cb30b14d1903fb1b9dd07660e2cdd7b3ffb64b0de1bacc9bab0e2d01bb7a5",
+      "features_buffer": "0b1009689d9a21bf1e40f492cc160f91ac8bf170d37cf997d7226c157056122f",
+      "img": "64e7f72f40ee8e3a783e804291020ef215c5d4f55cafb4e85cdb92a537030b63",
+      "traffic_convention": "bd27ff5b1cdcbedd550f1fc26c3e101c2f15a9a5d25b6b91c82485e507153772"
+    }
+  ]
+}

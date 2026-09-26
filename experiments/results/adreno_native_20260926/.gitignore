@@ -1,0 +1,4 @@
+# Keep raw model inputs, intermediate tensors, and outputs in the owned local
+# evidence directory. The JSON reports contain hashes and qualification metrics.
+*.npz
+*.onnx

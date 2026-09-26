@@ -1,0 +1,58 @@
+{
+  "model_sha256": "659727c4d4839adc4992a254409a54259a8756a743f2d567bf5fdc6579f8009b",
+  "seed": 42,
+  "rtol": 0.002,
+  "atol": 0.002,
+  "node4": {
+    "native_sha256": "54b71f5eed8d6ebfe90d0f3f6d0343b960558f33b8356f1aab984cece8ea8640",
+    "qcom_sha256": "54b71f5eed8d6ebfe90d0f3f6d0343b960558f33b8356f1aab984cece8ea8640",
+    "ort_sha256": "a8a9e212e241d15101ca13cdc2f99e946466e0f524d6c4cb56f5162ad1db8ffa",
+    "native_qcom": {
+      "not_close": 0,
+      "total": 786432,
+      "mean_abs": 0.0,
+      "max_abs": 0.0
+    },
+    "native_ort": {
+      "not_close": 0,
+      "total": 786432,
+      "mean_abs": 9.586413701375325e-07,
+      "max_abs": 6.103515625e-05
+    }
+  },
+  "node5": {
+    "native_sha256": "34b4b2e6e0440b2a97d3eb6dbbc4f8af3604341c83f7c0a008b9e86789eb5f7f",
+    "qcom_sha256": "726624ba74a9fab94a3e27189ffb6b726e4a6cfa68d75903f4c6286707e0b557",
+    "ort_sha256": "cc8951a87048e18ea02acac0764a09762f0bbeba1de667efe9b6edda31c6e199",
+    "native_qcom": {
+      "not_close": 617,
+      "total": 524288,
+      "mean_abs": 0.0010715289536165074,
+      "max_abs": 0.09375
+    },
+    "native_ort": {
+      "not_close": 2425,
+      "total": 524288,
+      "mean_abs": 0.0010975902013115046,
+      "max_abs": 0.0625
+    },
+    "qcom_ort": {
+      "not_close": 3329,
+      "total": 524288,
+      "mean_abs": 0.0014768937093094792,
+      "max_abs": 0.125
+    },
+    "native_fp32_cpu_conv": {
+      "not_close": 1268,
+      "total": 524288,
+      "mean_abs": 0.0009358720172940593,
+      "max_abs": 0.0625
+    },
+    "qcom_fp32_cpu_conv": {
+      "not_close": 1864,
+      "total": 524288,
+      "mean_abs": 0.0013276584087407173,
+      "max_abs": 0.125
+    }
+  }
+}

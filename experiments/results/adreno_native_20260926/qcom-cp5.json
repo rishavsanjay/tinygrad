@@ -1,0 +1,61 @@
+{
+  "device": "QCOM",
+  "model_sha256": "659727c4d4839adc4992a254409a54259a8756a743f2d567bf5fdc6579f8009b",
+  "seed": 42,
+  "input_hashes": {
+    "action_t": "20e8583b46f977bd259552118a3dd284c5dfe352014475305e7e151c2153dc51",
+    "big_img": "3973b44feada5ce62a4b9bbbcf65454c9038c01e91aecd2f95428ea2b254933e",
+    "desire_pulse": "57b9dffebb37a29ab62d977ef951dbaff7dd7750e9afa79c305dd4fed75b4802",
+    "features_buffer": "150fd16cad5406e9cd629b4bfd6b4f14b92979279eafd3b7593bc5e4ce2db598",
+    "img": "f96109b948bb01604d9b7bd2c8fda167db67fd51cb66651c3765d2af95be590e",
+    "traffic_convention": "226f1c52b385ecaa3e77de1699ec1235b24c3d6900c78e2186a6f7e9c34369a5"
+  },
+  "flags": {
+    "DEV": "QCOM:IR3",
+    "IMAGE": "0",
+    "FLOAT16": "1",
+    "OPENPILOT_HACKS": "1",
+    "NOLOCALS": "0",
+    "JIT_BATCH_SIZE": "0"
+  },
+  "nodes": {
+    "4": {
+      "op": "Div",
+      "outputs": [
+        {
+          "name": "div",
+          "shape": [
+            1,
+            24,
+            128,
+            256
+          ],
+          "dtype": "float16",
+          "sha256": "54b71f5eed8d6ebfe90d0f3f6d0343b960558f33b8356f1aab984cece8ea8640",
+          "min": -2.0,
+          "max": 2.0,
+          "finite": true
+        }
+      ]
+    },
+    "5": {
+      "op": "Conv",
+      "outputs": [
+        {
+          "name": "conv2d",
+          "shape": [
+            1,
+            64,
+            64,
+            128
+          ],
+          "dtype": "float16",
+          "sha256": "726624ba74a9fab94a3e27189ffb6b726e4a6cfa68d75903f4c6286707e0b557",
+          "min": -92.3125,
+          "max": 110.6875,
+          "finite": true
+        }
+      ]
+    }
+  }
+}
