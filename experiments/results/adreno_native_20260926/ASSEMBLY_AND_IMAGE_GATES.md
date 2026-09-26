@@ -22,9 +22,13 @@ official raw files at commit `da14d65e4499e66468094be52bff9ea0915a695e`:
   branches: base address, type/depth, width/height, format/swizzle, bit pitch,
   and array slice offset. `src/freedreno/fdl/fd6_layout.c` requires linear
   pitch alignment and protects the final level against 16×4 overfetch; its
-  layer size is page-aligned. The existing QCOM descriptor implementation is
-  shared by native ADRENO and checked against those fields. This is a source
-  audit plus A830 execution evidence, not a proof for other chips or layouts.
+  layer size is page-aligned. Native image selection now requires the entire
+  page-rounded layer span to fit in the argument's logical bytes. This is
+  conservative for an owned, page-backed short allocation, but avoids treating
+  an end-of-allocation view as if its following page were available. The
+  existing QCOM descriptor implementation is shared by native ADRENO and
+  checked against those fields. This is a source audit plus A830 execution
+  evidence, not a proof for other chips or layouts.
 
 ## Controlled Conv node 5 comparison
 
@@ -58,23 +62,27 @@ Conv disagreement.
 
 ## Qualification status
 
-- Host: 11 native assembly/artifact tests passed with `-n12`; Ruff and mypy
-  passed after image changes.
+- Host: 29 targeted assembly/image tests passed, two skipped with `-n12`;
+  Ruff and mypy passed after the span change.
 - A830 `IMAGE=2`: native image tests passed (FP32/FP16, mixed buffer input,
   interleaved images, coherent update, JIT rebinding, aligned view rejection,
-  and asymmetric border). Native full device suite passed 21 tests and 13
-  subtests after the border test.
-- A830 `IMAGE=0` and `IMAGE=1`: full native device suite passed 17 tests and
-  skipped four image-only tests in each mode.
-- A830 image stability: `image-qualification-100x5000.json` records 100/100
+  asymmetric border, and masked native image loads). Native full device suite
+  passed 22 tests and 13 subtests after the span change.
+- A830 `IMAGE=0` and `IMAGE=1`: full native device suite passed 17 tests,
+  skipped five image-only tests, and passed eight subtests in each mode after
+  the span change.
+- A830 image stability: `span-image-100x5000.json` records 100/100
   fresh processes with compiled native UAV image instructions, exact FP32
   output and unchanged inputs. One process completed 5,000 changed-input JIT
-  replays with three distinct input addresses and exact outputs.
-- Broad `IMAGE=2` backend ops gate remains **failed**: cross entropy requests
-  an image view with only 2,048 accessible bytes where the linear image layout
-  needs 4,096. The descriptor rejects it. Excluding that case exposes another
-  undersized image view in cumprod (97,024 accessible, 98,304 needed). No
-  fallback for these views has been qualified.
+  replays with three distinct input addresses and exact outputs. The earlier
+  `image-qualification-100x5000.json` used short page-backed images before the
+  span change; the new record uses 16×16 RGBA FP32 images with 4,096 logical bytes.
+- The previously rejected `IMAGE=2` cross entropy and cumprod ops now pass
+  on A830. A full backend ops run without fail-fast reached 75% before its
+  420-second timeout and recorded other failures without useful tracebacks.
+  In a fresh-cache fail-fast run, grouped Conv2D failed on 63/1260 values;
+  the same test also failed with `IMAGE=0`, affecting a different batch. The
+  broad ops gate remains **failed** and those failures need classification.
 - Broad `IMAGE=0` backend ops gate remains **failed** on batch-local Conv1D
   values. The same seed-42 probe fails with the pre-image renderer, and the
   failing batches change between runs. This is an inherited, nondeterministic
@@ -88,6 +96,6 @@ and source bytes, and records each fresh-process result and changed-address
 replay. Passing it is an additional gate; it does not clear the broad ops or
 model correctness failures.
 
-Do not treat targeted image execution as production qualification. The
-small-view image rejection, Conv1D nondeterminism, and controlled Conv node 5
-numerical difference remain open gates.
+Do not treat targeted image execution as production qualification. The broad
+ops failures, Conv1D nondeterminism, and controlled Conv node 5 numerical
+difference remain open gates.

@@ -12,7 +12,8 @@ from tinygrad.runtime.support.ir3 import IR3Shader
 # This encoder is Python code; no Mesa functions or compiled shader templates are used.
 _source_root = pathlib.Path(__file__).resolve().parents[2]
 _build_sources = ('runtime/support/compiler_adreno.py', 'renderer/adreno.py', 'runtime/autogen/adreno.py', 'runtime/ops_adreno.py',
-                  'codegen/__init__.py', 'codegen/late/coalesce.py', 'codegen/decomp/dtype.py', 'codegen/decomp/transcendental.py')
+                  'codegen/__init__.py', 'codegen/late/coalesce.py', 'codegen/opt/heuristic.py',
+                  'codegen/decomp/dtype.py', 'codegen/decomp/transcendental.py')
 BUILD = 'tinygrad-adreno-a830-v1_' + hashlib.sha256(b''.join((_source_root/path).read_bytes() for path in _build_sources)).hexdigest()
 ARCH = 'a830,chip_id=0x44050001'
 ARCH_IMAGE = 'a830,QCOM_IMAGE_PITCH_ALIGNMENT=16,chip_id=0x44050001'

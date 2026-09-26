@@ -12,11 +12,11 @@ def check_once(seed:int):
   from tinygrad.uop.ops import Ops
   if Device.DEFAULT != 'ADRENO' or 'QCOM_IMAGE_PITCH_ALIGNMENT=16' not in Device['ADRENO'].arch:
     raise RuntimeError('requires native A830 with images enabled')
-  probe=Tensor.empty(7,16,4,device='ADRENO')
+  probe=Tensor.empty(16,16,4,device='ADRENO')
   probe_calls=[c for c in (probe+1).contiguous().schedule_linear().src if c.op is Ops.CALL and c.src[0].op is Ops.SINK]
   resources=[AdrenoCompiler.unpack(to_program(c.src[0],Device['ADRENO'].renderer).to_elf().lib)[0] for c in probe_calls]
   if not any(r.num_uavs>=2 for r in resources): raise AssertionError('no native image load/store kernel was compiled')
-  a=np.arange(7*16*4,dtype=np.float32).reshape(7,16,4)/8+seed/4
+  a=np.arange(16*16*4,dtype=np.float32).reshape(16,16,4)/8+seed/4
   x=Tensor(a,device='ADRENO').contiguous().realize()
   out=(x+1).contiguous()
   y=out.numpy()
@@ -32,7 +32,7 @@ def replay(count:int):
   addresses=set()
   start=time.perf_counter()
   for i in range(count+2):
-    a=np.arange(7*16*4,dtype=np.float32).reshape(7,16,4)/8+i/4
+    a=np.arange(16*16*4,dtype=np.float32).reshape(16,16,4)/8+i/4
     x=Tensor(a,device='ADRENO').contiguous().realize()
     addresses.add(int(x.uop.buffer._buf.va_addr))
     np.testing.assert_array_equal(run(x).numpy(),a+1)

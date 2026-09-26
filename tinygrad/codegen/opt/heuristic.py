@@ -59,7 +59,8 @@ def hand_coded_optimizations(k:Scheduler) -> Scheduler:
     buf_order = sorted(range(len(k.bufs)), key=lambda i: not any(r in k.bufs[i].src[1].backward_slice for r in reduce_rngs))
     for buf_index in buf_order:
       buf = k.bufs[buf_index]
-      if image_valid_dims(buf.src[0].dtype, buf.src[0].max_numel(), k.ren.target.arch):
+      if image_valid_dims(buf.src[0].dtype, buf.src[0].max_numel(), k.ren.target.arch,
+                          full_span=k.ren.target.device=="ADRENO"):
         idx = k.bufs[buf_index].src[1]
         # IMAGE upcasts require one validity shared by all four unit-stride lanes so memory_coalescing can combine them into one vector read.
         unit_stride_axes_mul_4 = [k.rngs.index(c) for c in idx.get_idx().split_uop(Ops.ADD) if

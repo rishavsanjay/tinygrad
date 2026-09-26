@@ -64,7 +64,7 @@ indexing_simplify = PatternMatcher([
 ])
 
 # get list of (height, width) that do not require pitch padding
-def image_valid_dims(base:DType, size:int, arch:str) -> list[tuple[int,int]]:
+def image_valid_dims(base:DType, size:int, arch:str, full_span:bool=False) -> list[tuple[int,int]]:
   qcom_align = next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("QCOM_IMAGE_PITCH_ALIGNMENT=")), 0)
   if (ALIGN:=qcom_align or next((int(p.split('=')[1]) for p in arch.split(',') if p.startswith("IMAGE_PITCH_ALIGNMENT=")), 0)) == 0: return []
   MAXW, pxls = 16384, size // 4
@@ -75,6 +75,11 @@ def image_valid_dims(base:DType, size:int, arch:str) -> list[tuple[int,int]]:
   if qcom_align:
     alloc_size = round_up(size * base.itemsize, 0x1000)
     dims = [(h,w) for h,w in dims if w % ALIGN == 0 and w * 4 * base.itemsize * round_up(h, 4) <= alloc_size]
+    # The compiler does not know whether a parameter is a base allocation or a
+    # view near its end. For native ADRENO, admit only layouts whose complete
+    # Mesa layer span fits inside the argument's logical bytes. QCOM keeps its
+    # established page-rounded base-allocation behavior.
+    if full_span: dims = [(h,w) for h,w in dims if round_up(w * 4 * base.itemsize * round_up(h, 4), 0x1000) <= size * base.itemsize]
   return dims
 
 def transform_to_image(ctx, buf:UOp, x:UOp) -> UOp|None:
@@ -83,7 +88,8 @@ def transform_to_image(ctx, buf:UOp, x:UOp) -> UOp|None:
   valid, x = x.get_valid(), x.get_idx()
   # search for dims that drop the most valid statements
   best_drop, cands = -1, []
-  for ch, cw in [shapes[buf.arg.slot]] if buf.arg.slot in shapes else image_valid_dims(buf.dtype, buf.max_numel(), ren.target.arch):
+  for ch, cw in [shapes[buf.arg.slot]] if buf.arg.slot in shapes else \
+                image_valid_dims(buf.dtype, buf.max_numel(), ren.target.arch, full_span=ren.target.device=="ADRENO"):
     cidx = uop_given_valid(valid, ((x//4)%cw).stack(x//(4*cw)))
     dropped = len(_drop_valid_stmts(valid, cidx, ch, cw))
     if dropped > best_drop: best_drop, cands = dropped, [(ch, cw, cidx)]

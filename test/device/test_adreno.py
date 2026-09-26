@@ -217,7 +217,8 @@ class TestAdrenoImages(unittest.TestCase):
   def test_fp32_fp16_image_arithmetic_and_buffer_bias(self):
     for dt,npdt,tol in ((dtypes.float,np.float32,1e-6),(dtypes.half,np.float16,3e-3)):
       with self.subTest(dtype=dt):
-        a=(np.arange(7*16*4,dtype=np.float32).reshape(7,16,4)/17).astype(npdt)
+        shape=(16,16,4) if dt==dtypes.float else (32,16,4)
+        a=(np.arange(np.prod(shape),dtype=np.float32).reshape(shape)/17).astype(npdt)
         x=Tensor(a,device='ADRENO',dtype=dt).contiguous().realize()
         bias=Tensor([1.5],device='ADRENO',dtype=dtypes.float).realize()
         out=((x+2).contiguous().realize()*bias).contiguous().numpy()
@@ -225,10 +226,10 @@ class TestAdrenoImages(unittest.TestCase):
         np.testing.assert_array_equal(x.numpy(),a)
 
   def test_interleaved_images_and_coherent_update(self):
-    a=np.arange(5*16*4,dtype=np.float32).reshape(5,16,4)/11
+    a=np.arange(16*16*4,dtype=np.float32).reshape(16,16,4)/11
     b=np.flip(a,axis=1).copy()+0.5
     def dual(out_add,in_a,out_mul,in_b):
-      y,x,c=UOp.range(5,0),UOp.range(16,1),UOp.range(4,2,AxisType.UPCAST)
+      y,x,c=UOp.range(16,0),UOp.range(16,1),UOp.range(4,2,AxisType.UPCAST)
       add=out_add[y,x,c].store(in_a[y,x,c]+in_b[y,x,c])
       mul=out_mul[y,x,c].store(in_a[y,x,c]*in_b[y,x,c])
       return UOp.group(add,mul).end(y,x,c).sink(arg=KernelInfo(name='native_image_dual'))
@@ -239,7 +240,7 @@ class TestAdrenoImages(unittest.TestCase):
     np.testing.assert_allclose(result[0].numpy(),a+b,rtol=1e-6,atol=1e-6)
     np.testing.assert_allclose(result[2].numpy(),a*b,rtol=1e-6,atol=1e-6)
     def update(image):
-      y,x,c=UOp.range(5,0),UOp.range(16,1),UOp.range(4,2,AxisType.UPCAST)
+      y,x,c=UOp.range(16,0),UOp.range(16,1),UOp.range(4,2,AxisType.UPCAST)
       return image[y,x,c].store(image[y,x,c]*2+1).end(y,x,c).sink(arg=KernelInfo(name='native_image_update'))
     same=Tensor.custom_kernel(Tensor(a,device='ADRENO').contiguous().realize(),fxn=update)[0]
     np.testing.assert_allclose(same.numpy(),a*2+1,rtol=1e-6,atol=1e-6)
@@ -249,16 +250,16 @@ class TestAdrenoImages(unittest.TestCase):
     def transform(x): return ((x+1).contiguous().realize()*2).contiguous().realize()
     addresses=[]
     for val in range(1,11,2):
-      x=Tensor.full((7,16,4),val,device='ADRENO').contiguous().realize()
+      x=Tensor.full((16,16,4),val,device='ADRENO').contiguous().realize()
       addresses.append(int(x.uop.buffer._buf.va_addr))
-      np.testing.assert_array_equal(transform(x).numpy(),np.full((7,16,4),(val+1)*2,dtype=np.float32))
+      np.testing.assert_array_equal(transform(x).numpy(),np.full((16,16,4),(val+1)*2,dtype=np.float32))
     self.assertGreater(len(set(addresses)),1)
     base=Buffer('ADRENO',1040,dtypes.float).allocate()
-    aligned=base.view(5*16*4,dtypes.float,64).allocate()
-    img=Tensor(UOp.from_buffer(aligned).reshape((5,16,4)))
-    with Context(IMAGE=0): img.assign(Tensor.ones(5,16,4,device='ADRENO')).realize()
-    np.testing.assert_array_equal((img+1).contiguous().numpy(),np.full((5,16,4),2,dtype=np.float32))
-    bad=Tensor(UOp.from_buffer(base.view(5*16*4,dtypes.float,16).allocate()).reshape((5,16,4)))
+    aligned=base.view(16*16*4,dtypes.float,64).allocate()
+    img=Tensor(UOp.from_buffer(aligned).reshape((16,16,4)))
+    with Context(IMAGE=0): img.assign(Tensor.ones(16,16,4,device='ADRENO')).realize()
+    np.testing.assert_array_equal((img+1).contiguous().numpy(),np.full((16,16,4),2,dtype=np.float32))
+    bad=Tensor(UOp.from_buffer(base.view(16*16*4,dtypes.float,16).allocate()).reshape((16,16,4)))
     with self.assertRaisesRegex(ValueError,'unaligned QCOM image address'): (bad+1).contiguous().realize()
 
   def test_asymmetric_padding_zero_border(self):
@@ -273,5 +274,16 @@ class TestAdrenoImages(unittest.TestCase):
           for xidx in range(expected.shape[3]): expected[0,0,y,xidx]=(padded[0,0,y:y+2,xidx:xidx+2]*w[0,0]).sum()
         out=Tensor(x,device='ADRENO').conv2d(Tensor(w,device='ADRENO'),padding=pad).numpy()
         np.testing.assert_allclose(out,expected,rtol=1e-5,atol=1e-5)
+
+  def test_masked_native_image_load(self):
+    a=np.arange(16*16*4,dtype=np.float32).reshape(16,16,4)/13
+    def masked(dst,src):
+      y,x,c=UOp.range(18,0),UOp.range(16,1),UOp.range(4,2,AxisType.UPCAST)
+      source_y=(y-1).valid((y>0)&(y<17))
+      return dst[y,x,c].store(src[source_y,x,c]).end(y,x,c).sink(arg=KernelInfo(name='native_masked_image'))
+    src=Tensor(a,device='ADRENO').contiguous().realize()
+    out=Tensor.custom_kernel(Tensor.empty(18,16,4,device='ADRENO'),src,fxn=masked)[0].numpy()
+    np.testing.assert_array_equal(out,np.pad(a,((1,1),(0,0),(0,0))))
+    np.testing.assert_array_equal(src.numpy(),a)
 
 if __name__=='__main__': unittest.main()

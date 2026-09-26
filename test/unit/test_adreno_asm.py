@@ -57,16 +57,26 @@ class TestAdrenoEncoding(unittest.TestCase):
 class TestAdrenoCompiler(unittest.TestCase):
   def test_image_lowering_and_artifact(self):
     with Context(IMAGE=2):
-      src=Tensor.empty(5,16,4,device='ADRENO',dtype=dtypes.float)
+      src=Tensor.empty(16,16,4,device='ADRENO',dtype=dtypes.float)
       ast=(src+1).contiguous().schedule_linear().src[-1].src[0]
       p=to_program(ast,AdrenoRenderer(Target('ADRENO',arch=ARCH_IMAGE)))
     resources,signature,_=AdrenoCompiler.unpack(p.to_elf().lib)
     self.assertEqual(resources.arch,ARCH_IMAGE)
     self.assertEqual(resources.num_uavs,2)
     self.assertEqual(resources.params,())
-    self.assertEqual([arg[3] for arg in signature],[[5,16,4],[5,16,4]])
+    self.assertTrue(all(arg[3][2]==4 and arg[3][0]*arg[3][1]*arg[3][2]==16*16*4 for arg in signature))
     ops={ins['op'] for ins in json.loads(p.src[2].arg)['instructions']}
     self.assertTrue({'ldib','stib'}<=ops)
+
+  def test_image_view_span_falls_back_to_buffer(self):
+    with Context(IMAGE=2):
+      src=Tensor.empty(5,16,4,device='ADRENO',dtype=dtypes.float)
+      ast=(src+1).contiguous().schedule_linear().src[-1].src[0]
+      p=to_program(ast,AdrenoRenderer(Target('ADRENO',arch=ARCH_IMAGE)))
+    resources,_,_=AdrenoCompiler.unpack(p.to_elf().lib)
+    self.assertEqual(resources.num_uavs,0)
+    ops={ins['op'] for ins in json.loads(p.src[2].arg)['instructions']}
+    self.assertTrue({'ldg','stg'}<=ops)
 
   def program(self):
     dst,src=UOp.param(0,dtypes.float,shape=(257,)),UOp.param(1,dtypes.float,shape=(257,))
