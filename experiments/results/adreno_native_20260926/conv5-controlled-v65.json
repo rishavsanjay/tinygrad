@@ -1,0 +1,37 @@
+{
+  "device": "ADRENO",
+  "inputs_sha256": {
+    "cpu_div": "a8a9e212e241d15101ca13cdc2f99e946466e0f524d6c4cb56f5162ad1db8ffa",
+    "native_div": "54b71f5eed8d6ebfe90d0f3f6d0343b960558f33b8356f1aab984cece8ea8640"
+  },
+  "weights_sha256": {
+    "w": "ad0e89d72b88ba3a03417af079d9dc4fd4a2795f571b5fbe18c6b61a6026f3b6",
+    "b": "012eeed36c6508a9bf965591e741271869a9a093be5c426dc74df1ae92a7dd6b"
+  },
+  "outputs": {
+    "cpu_div": {
+      "sha256": "b110267a8c04e030f6ac12faf9d48ef2354a25efa99027c907d579a91b62c35e",
+      "shape": [
+        1,
+        64,
+        64,
+        128
+      ],
+      "dtype": "float16"
+    },
+    "native_div": {
+      "sha256": "34b4b2e6e0440b2a97d3eb6dbbc4f8af3604341c83f7c0a008b9e86789eb5f7f",
+      "shape": [
+        1,
+        64,
+        64,
+        128
+      ],
+      "dtype": "float16"
+    }
+  },
+  "fp16_product": {
+    "sampled": 131072,
+    "bitwise_bad": 0
+  }
+}

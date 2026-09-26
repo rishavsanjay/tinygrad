@@ -81,6 +81,18 @@ failure arrays were preserved.
   out-of-tolerance values); its node 4 output has no values outside tolerance for either backend.
   The data support a numerical/rounding difference, but do not establish an acceptable
   full-model tolerance or rule out another downstream numerical issue.
+- A matched host `DEV=CPU` tinygrad ONNX run with the same flags, model, inputs, and seeds also
+  failed the ONNX Runtime output gate: **664/2576** outputs for seed 42 and **633/2576** for seed 43.
+  Native versus tinygrad CPU still differed in **462/2576** and **572/2576** outputs, so there is
+  both an inherited tinygrad/ONNX Runtime gap and a backend-specific gap. At node 4, tinygrad CPU
+  matched ONNX Runtime bitwise; native differed only within tolerance. Re-running native node-5 Conv
+  with the *exact* CPU node-4 tensor changed just **16/524288** outputs beyond tolerance versus
+  native's original input, while native Conv versus tinygrad CPU Conv on that same input differed in
+  **1418/524288**. A sampled **131072 FP16 products** matched NumPy bitwise. This localizes the
+  larger node-5 gap to the Conv computation and is consistent with an accumulation or reduction
+  order difference; the precise mechanism and acceptable model tolerance remain unproven. See
+  `experiments/results/adreno_native_20260926/cpu-and-conv-controls.json` and
+  `experiments/adreno_conv5_control.py`.
 - Two Qualcomm OpenCL reference attempts failed at platform discovery with status -1001. QCOM IR3
   and ONNX Runtime CPU were usable independent references.
 - Final-source host focused regression: **69 passed, 4 skipped** with pytest `-n12`; mypy passed

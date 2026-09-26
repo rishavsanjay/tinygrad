@@ -1,0 +1,105 @@
+{
+  "model_sha256": "659727c4d4839adc4992a254409a54259a8756a743f2d567bf5fdc6579f8009b",
+  "rtol": 0.002,
+  "atol": 0.002,
+  "model": {
+    "42": {
+      "native_sha256": "feabfa189ce39cb30f74b3d5df3880e25905ddc91d255ed66cedf8bc87f1bc60",
+      "tinygrad_cpu_sha256": "790daf7bd4674b24c1c9035e8a77d7bdeee664c30ea5d6dc8cedfc0a0b9abfb7",
+      "onnxruntime_cpu_sha256": "0b746d822b050d7bad3774fa82ce4bcb55a6f3340916d1866698cfcfbf071610",
+      "native_vs_tinygrad_cpu": {
+        "not_close": 462,
+        "total": 2576,
+        "mean_abs": 0.024679131572331918,
+        "max_abs": 1.6279296875,
+        "exact": 269
+      },
+      "tinygrad_cpu_vs_onnxruntime": {
+        "not_close": 664,
+        "total": 2576,
+        "mean_abs": 0.07909259618385754,
+        "max_abs": 5.6279296875,
+        "exact": 130
+      },
+      "native_vs_onnxruntime": {
+        "not_close": 971,
+        "total": 2576,
+        "mean_abs": 0.08765179337644428,
+        "max_abs": 6.0,
+        "exact": 104
+      }
+    },
+    "43": {
+      "native_sha256": "2a9e1b721dda6a68bb5b0a69d254fd7f00e611525ad46892b6000d6bdd34ab94",
+      "tinygrad_cpu_sha256": "d28013f06f718ecc4f10cf05132349c7532dd122eb6821133d6f251c92241174",
+      "onnxruntime_cpu_sha256": "5cc8d5282baf3ff90c7bbf6f5ae90be4abaa7c435559e3b9f6af79b9ec3bc628",
+      "native_vs_tinygrad_cpu": {
+        "not_close": 572,
+        "total": 2576,
+        "mean_abs": 0.04797066761137301,
+        "max_abs": 4.0,
+        "exact": 201
+      },
+      "tinygrad_cpu_vs_onnxruntime": {
+        "not_close": 633,
+        "total": 2576,
+        "mean_abs": 0.038683293416375227,
+        "max_abs": 2.0,
+        "exact": 292
+      },
+      "native_vs_onnxruntime": {
+        "not_close": 669,
+        "total": 2576,
+        "mean_abs": 0.05180239631152301,
+        "max_abs": 3.0,
+        "exact": 379
+      }
+    }
+  },
+  "node5_control": {
+    "cpu_div_sha256": "a8a9e212e241d15101ca13cdc2f99e946466e0f524d6c4cb56f5162ad1db8ffa",
+    "native_div_sha256": "54b71f5eed8d6ebfe90d0f3f6d0343b960558f33b8356f1aab984cece8ea8640",
+    "cpu_div_vs_onnxruntime": {
+      "not_close": 0,
+      "total": 786432,
+      "mean_abs": 0.0,
+      "max_abs": 0.0,
+      "exact": 786432
+    },
+    "native_div_vs_cpu_div": {
+      "not_close": 0,
+      "total": 786432,
+      "mean_abs": 9.586413701375325e-07,
+      "max_abs": 6.103515625e-05,
+      "exact": 774080
+    },
+    "native_conv_from_cpu_div_sha256": "b110267a8c04e030f6ac12faf9d48ef2354a25efa99027c907d579a91b62c35e",
+    "native_conv_from_native_div_sha256": "34b4b2e6e0440b2a97d3eb6dbbc4f8af3604341c83f7c0a008b9e86789eb5f7f",
+    "native_conv_from_native_div_matches_checkpoint": true,
+    "native_input_effect": {
+      "not_close": 16,
+      "total": 524288,
+      "mean_abs": 1.6595993656665087e-05,
+      "max_abs": 0.03125,
+      "exact": 520663
+    },
+    "native_vs_tinygrad_cpu_same_div": {
+      "not_close": 1418,
+      "total": 524288,
+      "mean_abs": 0.0006251177255762741,
+      "max_abs": 0.0625,
+      "exact": 410974
+    },
+    "tinygrad_cpu_conv_vs_onnxruntime": {
+      "not_close": 980,
+      "total": 524288,
+      "mean_abs": 0.0008904064551416013,
+      "max_abs": 0.0625,
+      "exact": 341644
+    }
+  },
+  "fp16_product": {
+    "sampled": 131072,
+    "bitwise_bad": 0
+  }
+}
