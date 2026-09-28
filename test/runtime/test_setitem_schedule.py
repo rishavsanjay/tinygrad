@@ -153,5 +153,13 @@ class TestSetitemInto(unittest.TestCase):
             self.assertListEqual(dst.tolist(), expected)
             self.assertListEqual(src.tolist(), values)
 
+  def test_cross_device_slice_assign_noncontiguous_fallback(self):
+    a = Tensor.zeros(4, 4, device="CPU").contiguous().realize()
+    b = Tensor.arange(4, dtype=dtypes.float32).reshape(2, 2).clone("CPU:1").realize()
+    GlobalCounters.reset()
+    a[1:3, 1:3].assign(b.to(a.device)).realize()
+    assert_kernel_count(2)
+    self.assertListEqual(a.tolist(), [[0.0]*4, [0.0, 0.0, 1.0, 0.0], [0.0, 2.0, 3.0, 0.0], [0.0]*4])
+
 if __name__ == '__main__':
   unittest.main()
