@@ -224,7 +224,7 @@ pm_callify_ctx_collect = PatternMatcher([
   # fold MOPS+BITCAST over BUFFER into SHRINK when movement ops collapse to contiguous range
   (UPat((Ops.COPY, Ops.STAGE), src=(UPat(GroupOp.Movement|{Ops.BITCAST}, name="src"),), allow_any_len=True, name="c"), contiguous_mops_to_view),
   (UPat(Ops.STORE, src=(UPat(Ops.BITCAST, name="src"), UPat()), name="c", allow_any_len=True), contiguous_mops_to_view),
-  # Expose a contiguous destination view so a cross-device STORE lowers to one bulk transfer.
+  # fold contiguous destination MOPS into SHRINK for cross-device STORE
   (UPat(Ops.STORE, src=(UPat(GroupOp.Movement, name="dst"), UPat(Ops.COPY, name="cpy")), name="c"),
    lambda ctx,c,dst,cpy: contiguous_mops_to_view(ctx, c, dst) if dst.base.op is Ops.BUFFER and cpy.src[0].device != c.device else None),
 
@@ -298,5 +298,6 @@ def create_linear_with_vars(big_sink:UOp) -> tuple[UOp, dict[str, int]]:
     capturing[0].add_linear(linear)
     return UOp(Ops.LINEAR, src=()), var_vals
 
-  held_bufs = {b for b in linear_call.src[1:] if b.op is Ops.BUFFER}
+  # hold backing buffers of call args, including views
+  held_bufs = {b for src in linear_call.src[1:] if (b:=src.storage_base).op is Ops.BUFFER}
   return memory_plan_rewrite(linear, held_bufs), var_vals

@@ -36,6 +36,8 @@ def _get_arena(buf, linear, result):
 
 def check_assign(buffer_lists, copies=None):
   linear = _make_linear(buffer_lists, copies)
+  # use backing buffers for lifetime checks
+  buffer_lists = [[buf.storage_base for buf in bufs] for bufs in buffer_lists]
   result = memory_plan_rewrite(linear, held_bufs)
 
   # build mapping: original buf -> (arena, offset_bytes, nbytes) from the result
@@ -81,6 +83,15 @@ class TestMemoryPlanner(unittest.TestCase):
       [b(1), b(2), b(3)],
       [b(4), b(3)],
       [b(5), b(2)],
+    ]
+    check_assign(bs)
+
+  def test_buffer_view_lifetime(self):
+    # the view keeps buffer 0 live while buffer 1 is used
+    bs = [
+      [b(0)],
+      [b(1)],
+      [b(0)[4:8]],
     ]
     check_assign(bs)
 

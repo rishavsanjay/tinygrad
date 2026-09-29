@@ -1,6 +1,5 @@
 import unittest
 from tinygrad import Tensor, Device, dtypes, GlobalCounters
-from tinygrad.engine.realize import run_linear
 from test.helpers import assert_kernel_count
 
 class TestSetitemInto(unittest.TestCase):
@@ -114,7 +113,7 @@ class TestSetitemInto(unittest.TestCase):
 
   @unittest.skipUnless(Device.DEFAULT != "CPU", "source must be on another device")
   def test_setitem_slice_assign_from_other_device(self):
-    # CL and WEBGPU cannot use buffer views, so they also materialize the source slice.
+    # CL and WEBGPU need a kernel for the source slice (no buffer views)
     a = Tensor.ones(20, device="CPU")
     b = Tensor.arange(20).float().clone()
     Tensor.realize(a, b)
@@ -124,20 +123,20 @@ class TestSetitemInto(unittest.TestCase):
     self.assertListEqual(a.tolist(), [1.0]*10 + [13.0, 14.0] + [1.0]*8)
 
   def test_cross_device_copy_contiguous_view(self):
-    dst = Tensor.full((4, 4), -1, dtype=dtypes.int32).contiguous().realize()
-    src = Tensor.arange(12, dtype=dtypes.int32).clone("CPU:1" if Device.DEFAULT == "CPU" else "CPU").realize()
-    view = dst.reshape(4, 1, 4)[1:3].permute(1, 0, 2).reshape(2, 4)
-    linear = view.assign(src[2:10].reshape(2, 4).to(dst.device)).schedule_linear()
-    self.assertEqual(len(linear.src), 2 if Device.DEFAULT in {"CL", "WEBGPU"} else 1)
-    run_linear(linear)
-    self.assertListEqual(dst.tolist(), [[-1]*4, [2, 3, 4, 5], [6, 7, 8, 9], [-1]*4])
+    a = Tensor.full((4, 4), -1, dtype=dtypes.int32).contiguous().realize()
+    b = Tensor.arange(12, dtype=dtypes.int32).clone("CPU:1" if Device.DEFAULT == "CPU" else "CPU").realize()
+    view = a.reshape(4, 1, 4)[1:3].permute(1, 0, 2).reshape(2, 4)
+    GlobalCounters.reset()
+    view.assign(b[2:10].reshape(2, 4).to(a.device)).realize()
+    assert_kernel_count(2 if Device.DEFAULT in {"CL", "WEBGPU"} else 1)
+    self.assertListEqual(a.tolist(), [[-1]*4, [2, 3, 4, 5], [6, 7, 8, 9], [-1]*4])
 
   def test_cross_device_copy_noncontiguous_view(self):
     a = Tensor.zeros(4, 4).contiguous().realize()
     b = Tensor.arange(4, dtype=dtypes.float32).reshape(2, 2).clone("CPU:1" if Device.DEFAULT == "CPU" else "CPU").realize()
-    linear = a[1:3, 1:3].assign(b.to(a.device)).schedule_linear()
-    self.assertEqual(len(linear.src), 2)
-    run_linear(linear)
+    GlobalCounters.reset()
+    a[1:3, 1:3].assign(b.to(a.device)).realize()
+    assert_kernel_count(2)
     self.assertListEqual(a.tolist(), [[0.0]*4, [0.0, 0.0, 1.0, 0.0], [0.0, 2.0, 3.0, 0.0], [0.0]*4])
 
 if __name__ == '__main__':

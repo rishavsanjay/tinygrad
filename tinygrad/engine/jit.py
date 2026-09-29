@@ -14,7 +14,7 @@ from dataclasses import dataclass
 def prune_linear(linear:UOp, needed:set[UOp]) -> tuple[UOp, UOp]:
   kept, onetime = [], []
   for si in linear.src:
-    # A view argument still depends on its backing buffer.
+    # track dependencies through buffer views
     si_bufs = {b for src in si.src[1:] for b in _collect_bufs(src.storage_base)}
     if not si_bufs.isdisjoint(needed):
       kept.append(si)

@@ -21,12 +21,12 @@ def memory_plan_rewrite(linear:UOp, held_bufs:set[UOp]|None=None) -> UOp:
   if NO_MEMORY_PLANNER: return linear
   if held_bufs is None: held_bufs = set()
 
-  # compute lifetimes for all plannable internal buffers
+  # compute lifetimes of backing buffers
   first_appearance:dict[UOp, int] = {}
   last_appearance:dict[UOp, int] = {}
   copy_bufs: set[UOp] = set()
   for i, si in enumerate(linear.src):
-    si_bufs = [b for src in si.src[1:] for b in _collect_bufs(src) if _can_plan(b, held_bufs)]
+    si_bufs = [b for src in si.src[1:] for b in _collect_bufs(src.storage_base) if _can_plan(b, held_bufs)]
     for b in si_bufs:
       if b not in first_appearance: first_appearance[b] = i
       last_appearance[b] = i
