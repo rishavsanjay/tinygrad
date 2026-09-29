@@ -224,6 +224,9 @@ pm_callify_ctx_collect = PatternMatcher([
   # fold MOPS+BITCAST over BUFFER into SHRINK when movement ops collapse to contiguous range
   (UPat((Ops.COPY, Ops.STAGE), src=(UPat(GroupOp.Movement|{Ops.BITCAST}, name="src"),), allow_any_len=True, name="c"), contiguous_mops_to_view),
   (UPat(Ops.STORE, src=(UPat(Ops.BITCAST, name="src"), UPat()), name="c", allow_any_len=True), contiguous_mops_to_view),
+  # Expose a contiguous destination view so a cross-device STORE lowers to one bulk transfer.
+  (UPat(Ops.STORE, src=(UPat(GroupOp.Movement, name="dst"), UPat(Ops.COPY, name="cpy")), name="c"),
+   lambda ctx,c,dst,cpy: contiguous_mops_to_view(ctx, c, dst) if dst.base.op is Ops.BUFFER and cpy.src[0].device != c.device else None),
 
   # Collect effects after their sources have been rewritten, without entering call bodies.
   (UPat(Ops.AFTER, name="u"), collect_stores),

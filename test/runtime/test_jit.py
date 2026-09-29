@@ -16,6 +16,17 @@ def _simple_test(add, extract=lambda x: x, N=10):
   assert_jit_cache_len(add, 1)
 
 class TestJit(unittest.TestCase):
+  def test_jit_copy_into_contiguous_view(self, prune=False):
+    @TinyJit(prune=prune)
+    def copy(dst, src): dst[1:3].assign(src[2:4].to(dst.device)).realize()
+    for i in range(5):
+      dst = Tensor.full(4, -1, dtype=dtypes.int32).contiguous().realize()
+      src = Tensor([0, 0, i, i+1], dtype=dtypes.int32, device="CPU:1" if Device.DEFAULT == "CPU" else "CPU").realize()
+      copy(dst, src)
+      self.assertEqual(dst.tolist(), [-1, i, i+1, -1])
+
+  def test_jit_copy_into_contiguous_view_prune(self): self.test_jit_copy_into_contiguous_view(prune=True)
+
   def test_jit_input_view(self):
     @TinyJit
     def f(x): return (x[2:5].contiguous() + 1).realize()
