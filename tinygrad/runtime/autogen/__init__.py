@@ -55,6 +55,15 @@ def load(name, files, **kwargs):
 
 def _extract_deb(path:str): subprocess.run("ar x *.deb && tar xf data.tar.*", cwd=path, shell=True, check=True)
 
+def gen_mesa(name, files, **kwargs):
+  kwargs["prolog"] = ["from tinygrad.helpers import DEV", "import gzip, base64, sysconfig, os"]
+  source = importlib.import_module("tinygrad.runtime.support.autogen").gen("mesa", files, **kwargs)
+  header = ("from tinygrad.runtime.support.mesa_abi import dll, MESA_VERSION\n" +
+            f'if MESA_VERSION != "{name.removeprefix("mesa_").replace("_", ".")}": '
+            'raise RuntimeError("Mesa bindings do not match the loaded library")')
+  return "\n".join(header if line.startswith("dll = c.DLL(") else line.replace("import gzip, base64, sysconfig, os", "import gzip, base64")
+                   for line in source.split("\n") if line != "from tinygrad.helpers import DEV")
+
 def __getattr__(nm):
   match nm:
     case "libc":
@@ -141,11 +150,19 @@ def __getattr__(nm):
       return load("rocprof", [f"{{}}/include/{s}.h" for s in ["rocprof_trace_decoder", "trace_decoder_instrument", "trace_decoder_types"]],
                   dll= "['rocprof-trace-decoder', p:='/usr/local/lib/rocprof-trace-decoder.so', p.replace('so','dylib')]",
                   srcs="https://github.com/ROCm/rocprof-trace-decoder/archive/dd0485100971522cc4cd8ae136bdda431061a04d.tar.gz")
-    case "mesa": return load("mesa", [
+    case "mesa":
+      if getenv("REGEN"):
+        from tinygrad.runtime.support.mesa_abi import MESA_VERSION
+        __getattr__("mesa_" + MESA_VERSION.replace(".", "_"))
+      return importlib.import_module("tinygrad.runtime.autogen.mesa")
+    case "mesa_25_2_7" | "mesa_26_2_5":
+      version = nm.removeprefix("mesa_").replace("_", ".")
+      modern = version == "26.2.5"
+      return load(nm, [
         *[f"{{}}/src/compiler/nir/{s}.h" for s in ["nir", "nir_builder", "nir_shader_compiler_options", "nir_serialize"]], "{}/gen/nir_intrinsics.h",
         *[f"{{}}/src/nouveau/{s}.h" for s in ["headers/nv_device_info", "compiler/nak"]],
         *[f"{{}}/src/gallium/auxiliary/gallivm/lp_bld{s}.h" for s in ["", "_passmgr", "_misc", "_type", "_init", "_nir", "_struct", "_jit_types",
-                                                                     "_flow", "_const"]],
+                                                                     "_flow", "_const"] + (["_tgsi"] if modern else [])],
         *[f"{{}}/src/freedreno/{s}.h" for s in ["common/freedreno_dev_info", "ir3/ir3_compiler", "ir3/ir3_shader", "ir3/ir3_nir"]],
         "{}/src/compiler/glsl_types.h", "{}/src/util/blob.h", "{}/src/util/ralloc.h", "{}/gen/ir3-isa.h", "{}/gen/builtin_types.h",
         "{}/gen/a6xx.xml.h", "{}/gen/adreno_pm4.xml.h", "{}/gen/a6xx_enums.xml.h", "{}/gen/a6xx_descriptors.xml.h"], args=lambda:[
@@ -158,10 +175,11 @@ def __getattr__(nm):
           *["python3 src/freedreno/registers/gen_header.py --rnn src/freedreno/registers/ --xml " +
             f"src/freedreno/registers/adreno/{s}.xml c-defines > gen/{s}.xml.h" for s in ["a6xx", "adreno_pm4", "a6xx_enums", "a6xx_descriptors"]],
           *[f"python3 src/compiler/{s}_h.py > gen/{s.split('/')[-1]}.h" for s in ["nir/nir_opcodes", "nir/nir_builder_opcodes"]],
-          *[f"python3 src/compiler/nir/nir_{s}_h.py --outdir gen" for s in ["intrinsics", "intrinsics_indices"]]]), cwd=path, shell=True, check=True),
-  srcs="https://gitlab.freedesktop.org/mesa/mesa/-/archive/mesa-25.2.7/mesa-25.2.7.tar.gz",
-  dll=f"'tinymesa_cpu' if DEV.renderer == 'LVP' else 'tinymesa', {tinymesa_path}, emsg='pip install tinymesa==25.2.7.2'",
-  prolog=["from tinygrad.helpers import DEV", "import gzip, base64, sysconfig, os"],
+          *[f"python3 src/compiler/nir/nir_{s}_h.py " + (f"--out gen/nir_{s}.h" if modern else "--outdir gen") for s in ["intrinsics", "intrinsics_indices"]]]), cwd=path, shell=True, check=True),
+  srcs=f"https://archive.mesa3d.org/mesa-{version}.tar.xz", gen=gen_mesa,
+  rules=[(r'\b__FD_DEPRECATED\b', ''), (r'_Pragma\s*\("GCC warning \\"Deprecated reg builder\\""\)', '')],
+  dll=f"'tinymesa_cpu' if DEV.renderer == 'LVP' else 'tinymesa', {tinymesa_path}, emsg='pip install tinymesa==26.2.5.3'",
+  prolog=["import gzip, base64"],
   epilog=lambda path: [system(f"{root}/extra/mesa/lvp_nir_options.sh {path}")])
     case "libclang":
       return load("libclang",

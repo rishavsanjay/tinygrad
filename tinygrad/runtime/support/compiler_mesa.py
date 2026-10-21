@@ -3,6 +3,7 @@ from tinygrad.device import Compiler
 from tinygrad.helpers import cpu_objdump, system, data64
 from tinygrad.runtime.autogen import mesa, llvm, libc
 from tinygrad.runtime.support.compiler_llvm import CPULLVMCompiler, expect, cerr
+from tinygrad.runtime.support.mesa_abi import MESA_VERSION
 
 # NB: compilers assume mesa's glsl type cache is managed externally with mesa.glsl_type_singleton_init_or_ref() and mesa.glsl_type_singleton_decref()
 
@@ -17,11 +18,12 @@ def deserialize(enc_src, opts):
   return mesa.nir_deserialize(None, ctypes.cast(opts, ctypes.POINTER(mesa.nir_shader_compiler_options)), blobreader)
 
 class LVPCompiler(CPULLVMCompiler):
-  def __init__(self, arch): CPULLVMCompiler.__init__(self, arch.split(","), cache_key="compile_lvp")
+  def __init__(self, arch): CPULLVMCompiler.__init__(self, arch.split(","), cache_key=f"compile_lvp_mesa_{MESA_VERSION}")
 
   def compile(self, src) -> bytes:
     shader, ctx = deserialize(src, mesa.lvp_nir_options), llvm.LLVMGetGlobalContext()
-    gallivm = mesa.gallivm_create(None, mesa.lp_context_ref(ctypes.cast(ctx, ctypes.POINTER(mesa.struct_LLVMOpaqueContext)), True), None).contents
+    gallivm = mesa.gallivm_create(None, mesa.lp_context_ref(ref=ctypes.cast(ctx, ctypes.POINTER(mesa.struct_LLVMOpaqueContext)),
+                                                        owned=MESA_VERSION == "25.2.7"), None).contents
     module, builder = ctypes.cast(gallivm.module, llvm.LLVMModuleRef), ctypes.cast(gallivm.builder, llvm.LLVMBuilderRef)
 
     params = mesa.struct_lp_build_tgsi_params(mesa.struct_lp_type(floating=True, sign=True, width=32, length=4),
@@ -58,7 +60,7 @@ class NAKCompiler(Compiler):
     self.arch = arch
     self.cc = mesa.nak_compiler_create(mesa.struct_nv_device_info(sm=int(arch[3:]), max_warps_per_mp=self.warps_per_sm(arch)))
     self.nir_options = bytes(mesa.nak_nir_options(self.cc).contents)
-    super().__init__(f"compile_nak_{arch}")
+    super().__init__(f"compile_nak_mesa_{MESA_VERSION}_{arch}")
 
   def __del__(self): mesa.nak_compiler_destroy(self.cc)
 
@@ -67,7 +69,9 @@ class NAKCompiler(Compiler):
   def compile(self, src) -> bytes:
     shader = deserialize(src, self.nir_options)
     mesa.nak_preprocess_nir(shader, self.cc)
-    ret = bytes((out:=mesa.nak_compile_shader(shader, False, self.cc, 0, None).contents).info) + ctypes.string_at(out.code, out.code_size)
+    out = (mesa.nak_compile_shader(shader, False, self.cc, 0, None, False) if MESA_VERSION == "26.2.5" else
+           getattr(mesa, "nak_compile_shader")(shader, False, self.cc, 0, None)).contents
+    ret = bytes(out.info) + ctypes.string_at(out.code, out.code_size)
     mesa.nak_shader_bin_destroy(out)
     mesa.ralloc_free(shader)
     return ret
@@ -97,32 +101,43 @@ class IR3Compiler(Compiler):
   def __init__(self, arch):
     assert arch.split(',')[0] == "a630", "only a630 supported, for now"
     self.arch, self.dev_id = arch, mesa.struct_fd_dev_id(630, 0x6030001)
-    self.cc = mesa.ir3_compiler_create(None, self.dev_id, mesa.fd_dev_info(self.dev_id),
+    self.dev_info = mesa.fd_dev_info(self.dev_id)
+    self.cc = mesa.ir3_compiler_create(None, self.dev_id, self.dev_info,
                                        mesa.struct_ir3_compiler_options(disable_cache=True)).contents
     self.cc.has_preamble = False
     self.nir_options = bytes(mesa.ir3_get_compiler_options(self.cc).contents)
-    super().__init__(f"compile_ir3_{arch}")
+    super().__init__(f"compile_ir3_mesa_{MESA_VERSION}_{arch}")
 
   def __del__(self): mesa.ir3_compiler_destroy(self.cc)
 
   def __reduce__(self): return IR3Compiler, (self.arch,)
 
-  # ir3_shader_variant info: https://elixir.bootlin.com/mesa/mesa-25.3.0/source/src/freedreno/ir3/ir3_shader.c#L1099
   def compile(self, src) -> bytes:
     nir_shader = deserialize(src, self.nir_options)
     mesa.ir3_nir_lower_io_vars_to_temporaries(nir_shader)
     mesa.ir3_finalize_nir(self.cc, mesa.struct_ir3_shader_nir_options(), nir_shader)
-    shader = rzalloc(mesa.struct_ir3_shader, compiler=ctypes.pointer(self.cc), type=mesa.MESA_SHADER_COMPUTE, nir=nir_shader).contents
-    mesa.ir3_nir_post_finalize(shader)
-    v = rzalloc(mesa.struct_ir3_shader_variant, type=shader.type, compiler=ctypes.pointer(self.cc), key=mesa.struct_ir3_shader_key()).contents
-    v.const_state, shader.variants, shader.variant_count = rzalloc(mesa.struct_ir3_const_state, ctypes.pointer(v)), ctypes.pointer(v), 1
-    v.num_uavs = (info:=nir_shader.contents.info).num_ssbos + info.num_images
-    assert not mesa.ir3_compile_shader_nir(self.cc, shader, v), "compilation failed"
-    lib = ctypes.cast(mesa.ir3_shader_assemble(v), ctypes.POINTER(ctypes.c_uint32))
-    # NB: bytes(v) means the pointers in v are no longer safe! a custom __reduce__ that supports pointers for c.Struct would make this simpler
-    ret = bytes(v) + bytes(v.const_state.contents) + ctypes.string_at(v.imm_state.values, v.imm_state.count * 4) + ctypes.string_at(lib, v.info.size)
-    mesa.ralloc_free(ctypes.pointer(v))
-    return ret
+    if MESA_VERSION == "25.2.7":
+      shader = rzalloc(mesa.struct_ir3_shader, compiler=ctypes.pointer(self.cc), type=mesa.MESA_SHADER_COMPUTE, nir=nir_shader).contents
+      mesa.ir3_nir_post_finalize(shader)
+      v = rzalloc(mesa.struct_ir3_shader_variant, type=shader.type, compiler=ctypes.pointer(self.cc), key=mesa.struct_ir3_shader_key()).contents
+      v.const_state, shader.variants, shader.variant_count = rzalloc(mesa.struct_ir3_const_state, ctypes.pointer(v)), ctypes.pointer(v), 1
+      v.num_uavs = (info:=nir_shader.contents.info).num_ssbos + info.num_images
+      assert not mesa.ir3_compile_shader_nir(self.cc, shader, v), "compilation failed"
+      lib = ctypes.cast(mesa.ir3_shader_assemble(v), ctypes.POINTER(ctypes.c_uint32))
+      ret = bytes(v) + bytes(v.const_state.contents) + \
+        ctypes.string_at(v.imm_state.values, v.imm_state.count * 4) + ctypes.string_at(lib, v.info.size)
+      mesa.ralloc_free(ctypes.pointer(v))
+      return ret
+    shader = mesa.ir3_shader_from_nir(self.cc, nir_shader, mesa.struct_ir3_shader_options())
+    null_upload = ctypes.CFUNCTYPE(None, ctypes.POINTER(mesa.struct_ir3_shader_variant), ctypes.c_void_p)()
+    try:
+      variant = mesa.ir3_shader_get_variant(shader, mesa.struct_ir3_shader_key(), False, False, null_upload, None)
+      if not variant: raise RuntimeError("IR3 compilation failed")
+      v = variant.contents
+      # NB: bytes(v) means the pointers in v are no longer safe!
+      return bytes(v) + bytes(v.const_state.contents) + \
+        ctypes.string_at(v.imm_state.values, v.imm_state.count * 4) + ctypes.string_at(v.bin, v.info.size)
+    finally: mesa.ir3_shader_destroy(shader)
 
   @staticmethod
   def unpack_lib(lib: bytes) -> tuple[mesa.struct_ir3_shader_variant, mesa.struct_ir3_const_state, bytes, bytes]:

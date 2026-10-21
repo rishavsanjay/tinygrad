@@ -1,11 +1,12 @@
 from __future__ import annotations
 import os, ctypes, functools, mmap, struct, array, math, contextlib
-from typing import Any
+from typing import Any, cast
 from tinygrad.device import Compiled, BufferStorage, BufferSpec, Buffer, Device, Allocator, TinyELF
 from tinygrad.runtime.support.hcq2 import HWQueue, HCQ_RUNTIME_DEV, ccall, cstruct, patch, unwrap_view, layout_args, pack_args, make_program
 from tinygrad.runtime.support.memory import MMIOInterface
 from tinygrad.runtime.support.system import FileIOInterface
 from tinygrad.runtime.autogen import kgsl, mesa, libc
+from tinygrad.runtime.support.mesa_abi import MESA_VERSION
 from tinygrad.renderer.cstyle import QCOMCLRenderer
 from tinygrad.renderer.nir import IR3Renderer
 from tinygrad.helpers import getenv, mv_address, round_up, ceildiv, prod, is_image_shape
@@ -37,7 +38,8 @@ def _qreg_exec(__reg, __val=0, **kwargs):
     reg_name = f"{__reg[4:]}_{k.removeprefix('_').upper()}"
     __val |= (getattr(mesa, reg_name) if v else 0) if type(v) is bool else (v << getattr(mesa, f'{reg_name}__SHIFT'))
   return __val
-qreg: Any = type("QREG", (object,), {name[4:].lower(): functools.partial(_qreg_exec, name) for name in mesa.__dict__.keys() if name[:4] == 'REG_'})
+qreg: Any = type("QREG", (object,), {name[4:].lower().replace('tex_const', 'tex_memobj'): functools.partial(_qreg_exec, name)
+                                  for name in mesa.__dict__.keys() if name[:4] == 'REG_'})
 
 def ctz(v): return (v & -v).bit_length() - 1
 
@@ -109,10 +111,10 @@ class QCOMComputeQueue(HWQueue):
       imgdt, shape, addr = b
       pitch = shape[1] * 4 * imgdt.itemsize
       fmt = mesa.FMT6_32_32_32_32_FLOAT if imgdt.itemsize == 4 else mesa.FMT6_16_16_16_16_FLOAT
-      return [qreg.a6xx_tex_const_0(fmt=fmt) if ibo else qreg.a6xx_tex_const_0(0x8, swiz_x=0, swiz_y=1, swiz_z=2, swiz_w=3, fmt=fmt),
-              qreg.a6xx_tex_const_1(width=shape[1], height=shape[0]),
-              qreg.a6xx_tex_const_2(type=mesa.A6XX_TEX_2D, pitch=pitch, pitchalign=ctz(pitch)-6), 0, addr,
-              qreg.a6xx_tex_const_6(plane_pitch=0x400000), qreg.a6xx_tex_const_7(13), 0, 0, 0, 0, 0, 0, 0, 0]
+      return [qreg.a6xx_tex_memobj_0(fmt=fmt) if ibo else qreg.a6xx_tex_memobj_0(0x8, swiz_x=0, swiz_y=1, swiz_z=2, swiz_w=3, fmt=fmt),
+              qreg.a6xx_tex_memobj_1(width=shape[1], height=shape[0]),
+              qreg.a6xx_tex_memobj_2(type=mesa.A6XX_TEX_2D, pitch=pitch, pitchalign=ctz(pitch)-6), 0, addr,
+              qreg.a6xx_tex_memobj_6(plane_pitch=0x400000), qreg.a6xx_tex_memobj_7(13), 0, 0, 0, 0, 0, 0, 0, 0]
     args += layout_args(flatten(map(_tex, texs)), data.tex_off) + layout_args(flatten(map(functools.partial(_tex, ibo=True), ibos)), data.ibo_off)
     return UOp(Ops.LINEAR, src=tuple(pack_args(args, data.kernargs_alloc_size)), arg="kernargs")
 
@@ -210,7 +212,9 @@ class QCOMProgramData:
     if self.NIR:
       from tinygrad.runtime.support.compiler_mesa import IR3Compiler
       v, cs, imm_vals, self.image = IR3Compiler.unpack_lib(obj.lib)
-      self.prg_offset, self.brnchstck, self.image_size, self.pvtmem, self.shmem = 0, v.branchstack, v.info.size, v.pvtmem_size, v.shared_size
+      self.prg_offset, self.image_size, self.pvtmem, self.shmem = 0, v.info.size, v.pvtmem_size, v.shared_size
+      self.brnchstck = (round_up(min(v.branchstack, cast(IR3Compiler, dev.compiler).cc.max_branchstack), 2)
+                       if MESA_VERSION == "26.2.5" else v.branchstack)
       self.wgsz = alloc.offset_vec4 * 4 + 8 if (alloc:=cs.allocs.consts[mesa.IR3_CONST_ALLOC_DRIVER_PARAMS]).size_vec4 else 0xfc
 
       self.wgid, self.lid = v.cs.work_group_id, v.cs.local_invocation_id # register ids
@@ -243,7 +247,9 @@ class QCOMProgramData:
 
     # Parse image descriptors
     image_desc_off = _read_lib(lib, 0x110)
-    self.prg_offset, self.brnchstck = _read_lib(lib, image_desc_off+0xc4), _read_lib(lib, image_desc_off+0x108) // 2
+    self.prg_offset = _read_lib(lib, image_desc_off+0xc4)
+    self.brnchstck = (round_up(_read_lib(lib, image_desc_off+0x108), 2) if MESA_VERSION == "26.2.5" else
+                     _read_lib(lib, image_desc_off+0x108) // 2)
     self.pvtmem, self.shmem = _read_lib(lib, image_desc_off+0xc8), _read_lib(lib, image_desc_off+0xd8)
 
     # Fill up constants and buffers info

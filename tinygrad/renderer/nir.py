@@ -5,6 +5,7 @@ from tinygrad.renderer import Renderer, with_storage
 from tinygrad.renderer.cstyle import CUDARenderer
 from tinygrad.uop.ops import GroupOp, Ops, UOp, PatternMatcher, UPat, range_str
 from tinygrad.runtime.autogen import mesa, libc
+from tinygrad.runtime.support.mesa_abi import MESA_VERSION
 from tinygrad.runtime.support.c import POINTER
 import base64, ctypes, struct, functools, inspect, itertools
 
@@ -58,7 +59,8 @@ def nir_instr(nc=1, bs=lambda: None, intrins=None, srcs=None, has_def=True, df=N
     return wrapper
   return dec
 
-@nir_instr(nc=1, bs=lambda src: src.bit_size, exact=lambda b:b.exact, fp_fast_math=lambda b:b.fp_fast_math)
+@nir_instr(nc=1, bs=lambda src: src.bit_size,
+           **({"exact":lambda b:getattr(b, "exact"), "fp_fast_math":lambda b:getattr(b, "fp_fast_math")} if MESA_VERSION == "25.2.7" else {}))
 def nchannel(b:mesa.nir_builder, src:mesa.nir_def, c:int):
   alu_src = mesa.nir_alu_src(src=nsrc(src))
   alu_src.swizzle[0] = c
@@ -67,7 +69,8 @@ def nchannel(b:mesa.nir_builder, src:mesa.nir_def, c:int):
   return mov
 
 def nimm_set(imm:mesa.nir_def, x, dtype:DType):
-  instr = ctypes.cast(imm.parent_instr, ctypes.POINTER(mesa.nir_load_const_instr))
+  instr = ctypes.cast(mesa.nir_def_instr_noninline(imm) if MESA_VERSION == "26.2.5" else getattr(imm, "parent_instr"),
+                      ctypes.POINTER(mesa.nir_load_const_instr))
   struct.pack_into(unwrap(dtype.fmt), (ctypes.c_ubyte * dtype.itemsize).from_address(ctypes.addressof(instr.contents.value)), 0, truncate[dtype](x))
 
 @nir_instr(nc=1, bs=lambda dtype: dtype.bitsize)
@@ -178,7 +181,9 @@ class NIRRenderer(Renderer):
 
   def param(self, b:mesa.nir_builder, x, sz:int) -> mesa.nir_def: raise NotImplementedError("needs param")
   def prerender(self, uops:list[UOp]):
-    self.b = mesa.nir_builder_init_simple_shader(mesa.MESA_SHADER_COMPUTE, mesa.nir_shader_compiler_options.from_buffer_copy(self.nir_options), None)
+    self._nir_options = mesa.nir_shader_compiler_options.from_buffer_copy(self.nir_options)
+    self.b = mesa.nir_builder_init_simple_shader(mesa.MESA_SHADER_COMPUTE, self._nir_options, None)
+    if MESA_VERSION == "26.2.5": self.b.fp_math_ctrl = mesa.nir_fp_preserve_sz_inf_nan
   def postrender(self, uops:list[UOp]): pass
 
   def render(self, uops:list[UOp]):
