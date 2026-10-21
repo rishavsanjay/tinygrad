@@ -52,6 +52,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh run watch '${{ inputs.tinymesa_run }}' --repo rishavsanjay/tinymesa --exit-status --interval 30
           gh run download '${{ inputs.tinymesa_run }}' --repo rishavsanjay/tinymesa --name 'tinymesa-whl-mesa-${{ matrix.mesa }}-ubuntu-22.04' --dir wheel
           uv pip install --no-deps wheel/*.whl
       - name: Verify ABI and library provenance
