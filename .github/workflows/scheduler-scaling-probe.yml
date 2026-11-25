@@ -1,0 +1,46 @@
+name: Scheduler scaling probe
+on:
+  push:
+    branches: [scheduler-scaling-probe-20261125]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scaling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        layers: [2, 8, 24]
+    env:
+      DEV: NULL
+      NULL_ALLOW_COPYOUT: '1'
+      DEFAULT_FLOAT: HALF
+      CAPTURE_PROCESS_REPLAY: '0'
+      BENCHMARK: '3'
+      BERT_LAYERS: ${{ matrix.layers }}
+      MODEL: bert
+      PYTHONPATH: .
+      DEBUG: '1'
+      BS: '24'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e . numpy tqdm
+      - name: Measure 1, 2, 4, 8 virtual GPUs
+        shell: bash
+        run: |
+          set -o pipefail
+          for g in 1 2 4 8; do
+            echo "::group::layers=$BERT_LAYERS devices=$g"
+            GPUS=$g /usr/bin/time -v python -u examples/mlperf/model_train.py 2>&1 | tee "bert-${BERT_LAYERS}L-${g}G.log"
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bert-scaling-${{ matrix.layers }}
+          path: bert-*.log
